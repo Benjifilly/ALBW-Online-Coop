@@ -21,6 +21,14 @@ if not defined PY goto python_error
 if errorlevel 1 goto setup_error
 
 :components
+rem Ce bloc reste en memoire si la mise a jour remplace ce fichier.
+(
+    .venv\Scripts\python.exe -m src.updater
+    if errorlevel 10 if not errorlevel 11 (
+        call "%~f0" %*
+        exit /b
+    )
+)
 .venv\Scripts\python.exe -c "import os; os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'; import PyQt6.QtWidgets, pygame" >nul 2>&1
 if errorlevel 1 (
     echo   Installation des composants : PyQt6, pygame...

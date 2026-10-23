@@ -69,6 +69,10 @@ class CoopOrchestrator(QObject):
             on_event_log=self.add_log,
             enemy_authority=enemy_authority,
         )
+        from src.network.reachability import HostingAccess
+        self.hosting_access=HostingAccess(self.add_log)
+        from src.online_progress import OnlineProgress
+        self.online_progress=OnlineProgress(self,profile,emulator_pid)
 
         self._running = True
         self._latest_ui_snapshot: Dict = {
@@ -252,6 +256,8 @@ class CoopOrchestrator(QObject):
         result.update(net_mode=self.net.mode, soul_link=self.net.soul_link,
                       port=self.net.bind_port, host_target=self.net.host_target)
         result.update(self.net.get_connection_info())
+        result.update(self.hosting_access.snapshot())
+        result.update(self.online_progress.poll())
         return result
 
     def set_identity(self, name: str, tunic_idx: int) -> None:
@@ -261,12 +267,16 @@ class CoopOrchestrator(QObject):
         self.net.tunic_color = TUNIC_NAMES.get(self.tunic_idx, "green")
 
     def start_hosting(self, port: int = 45990) -> bool:
-        return self.net.start_host(port)
+        ok=self.net.start_host(port)
+        if ok:self.hosting_access.start(self.net.bind_port)
+        return ok
 
     def join_host(self, host_ip: str, port: int = 45990) -> bool:
+        self.hosting_access.close()
         return self.net.join_host(host_ip, port)
 
     def leave_session(self) -> None:
+        self.hosting_access.close()
         self.net.stop()
         self._latest_ui_snapshot = dict(self._latest_ui_snapshot,
             players=[p for p in self._latest_ui_snapshot.get("players", []) if p.get("is_self")],
@@ -277,6 +287,7 @@ class CoopOrchestrator(QObject):
         if not self._running:
             return
         self._running = False
+        self.hosting_access.close()
         self.net.stop()
         with self._memory_lock:
             if not self.appearance.close():
@@ -321,6 +332,7 @@ def main() -> None:
     parser.add_argument("--process-name", help="Nom du programme lu dans le jeu local")
     parser.add_argument('--enemy-authority',action=argparse.BooleanOptionalAction,default=True,
                         help='Partager les ennemis entre les joueurs de chaque salle (vie, positions, attaques)')
+    parser.add_argument('--host-progress',action='store_true',help='Proposer l’import de la progression enregistrée de l’hôte')
     network = parser.add_mutually_exclusive_group()
     network.add_argument("--host-port", type=int)
     network.add_argument("--join", help="Adresse IPv4:port de l’hôte")
@@ -363,6 +375,14 @@ def main() -> None:
     print_banner(args.preview)
     orchestrator = None if args.preview else CoopOrchestrator(bridge,args.profile,args.emulator_pid,
                                                            enemy_authority=args.enemy_authority)
+    if orchestrator:
+        orchestrator.online_progress.auto=args.host_progress
+        saved_args=[]
+        for key in ('profile','gdb_port','rpc_port','title_id','process_name'):
+            value=getattr(args,key)
+            if value is not None:saved_args.extend(['--'+key.replace('_','-'),str(value)])
+        saved_args.append('--enemy-authority' if args.enemy_authority else '--no-enemy-authority')
+        orchestrator.online_progress.launch_args=saved_args
     if orchestrator and args.profile:
         status_dir = Path(__file__).resolve().parents[1] / ".local/profiles"
         status_dir.mkdir(parents=True, exist_ok=True)

@@ -1,13 +1,14 @@
 """The responsive co-op menu. Network and memory operations stay in the controller."""
 import html
 import ipaddress
+import threading
 
-from PyQt6.QtCore import Qt, QRectF, QTimer
+from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QAbstractSpinBox, QApplication, QBoxLayout, QButtonGroup, QCheckBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout,
     QLabel, QLineEdit, QTextEdit, QScrollArea, QGridLayout,
-    QSpinBox, QVBoxLayout, QWidget,
+    QSpinBox, QVBoxLayout, QWidget, QComboBox,
 )
 from src.console import log_tone
 from src.overlay.menu_widgets import (
@@ -113,6 +114,8 @@ class PageStack(QWidget):
         return self._index
 
 class CoopPanel(QFrame):
+    probe_finished=pyqtSignal(object,object)
+
     def __init__(self, overlay):
         super().__init__(overlay)
         self.overlay = overlay
@@ -122,6 +125,8 @@ class CoopPanel(QFrame):
         self._last_logs = None
         self._logs = []
         self._compact = None
+        self._probe_ticket=None
+        self.probe_finished.connect(self._joined_probe)
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 12)
         root.setSpacing(0)
@@ -256,10 +261,10 @@ class CoopPanel(QFrame):
         address_layout = QVBoxLayout(self.address_box)
         address_layout.setContentsMargins(0, 0, 0, 0)
         address_layout.setSpacing(6)
-        address_label = label("Adresse IPv4 de l’hôte", "section")
+        address_label = label("Adresse de l’hôte (port facultatif)", "section")
         self.ip_edit = QLineEdit(self.overlay.preferences.get("host", ""))
-        self.ip_edit.setPlaceholderText("Ex. 192.168.1.24")
-        self.ip_edit.setMaxLength(15)
+        self.ip_edit.setPlaceholderText("Ex. 100.80.12.34:45990")
+        self.ip_edit.setMaxLength(64)
         self.ip_edit.setAccessibleName("Adresse IPv4 de l’hôte")
         address_label.setBuddy(self.ip_edit)
         self.ip_edit.returnPressed.connect(self.submit_session)
@@ -267,8 +272,12 @@ class CoopPanel(QFrame):
         address_layout.addWidget(self.ip_edit)
         self.address_box.hide()
         layout.addWidget(self.address_box)
+        self.join_progress=QCheckBox('Rejoindre avec la progression de l’hôte')
+        self.join_progress.setToolTip('Télécharge la dernière sauvegarde enregistrée. Une copie de secours précède le choix du fichier à remplacer.')
+        self.join_progress.hide();layout.addWidget(self.join_progress)
 
-        port_row = QHBoxLayout()
+        self.port_box=QWidget();port_row = QHBoxLayout(self.port_box)
+        port_row.setContentsMargins(0,0,0,0)
         port_label = label("Port du salon", "section")
         self.port_edit = QSpinBox()
         self.port_edit.setRange(1, 65535)
@@ -279,7 +288,7 @@ class CoopPanel(QFrame):
         port_label.setBuddy(self.port_edit)
         port_row.addWidget(port_label, 1)
         port_row.addWidget(self.port_edit)
-        layout.addLayout(port_row)
+        layout.addWidget(self.port_box)
         self.btn_connect = button("Créer le salon", self.submit_session, "primary")
         layout.addWidget(self.btn_connect)
         self.session_status = label("Aucun salon ouvert", "section")
@@ -287,6 +296,17 @@ class CoopPanel(QFrame):
         layout.addSpacing(6)
         layout.addWidget(self.session_status)
         layout.addWidget(self.session_detail)
+        self.host_addresses=QComboBox();self.host_addresses.setAccessibleName('Adresse à donner à vos amis')
+        self.host_addresses.setMinimumContentsLength(8)
+        self.host_addresses.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        layout.addWidget(self.host_addresses)
+        self.copy_address=button('Copier l’adresse',self.copy_host_address)
+        layout.addWidget(self.copy_address)
+        self.network_hint=label('','muted');layout.addWidget(self.network_hint)
+        self.btn_progress=button('Reprendre la progression de l’hôte…',self.request_progress)
+        self.btn_progress.hide();layout.addWidget(self.btn_progress)
+        self.progress_status=label('','muted');layout.addWidget(self.progress_status)
+        self.host_addresses.hide();self.copy_address.hide()
         self.btn_leave = button("Quitter le salon", self.leave_session, "danger")
         self.btn_leave.hide()
         layout.addWidget(self.btn_leave)
@@ -382,6 +402,8 @@ class CoopPanel(QFrame):
 
     def set_join_mode(self, join):
         self.address_box.setVisible(join)
+        self.join_progress.setVisible(join)
+        self.port_box.setVisible(not join)
         self.btn_connect.setText("Rejoindre le salon" if join else "Créer le salon")
         self.message.hide()
         if join:
@@ -398,18 +420,18 @@ class CoopPanel(QFrame):
         self.btn_connect.setEnabled(False)
         port = self.port_edit.value()
         if self.mode_group.checkedId() == 1:
-            address = self.ip_edit.text().strip()
-            try:
-                parsed = ipaddress.IPv4Address(address)
-                if parsed.is_multicast or parsed.is_unspecified or str(parsed) == "255.255.255.255":
-                    raise ValueError("not a host address")
-            except ValueError:
-                self.show_message("Saisissez l’adresse IPv4 de votre ami, par exemple 192.168.1.24.", error=True)
+            from src.network.probe import parse_address,probe
+            target=parse_address(self.ip_edit.text(),45990)
+            if target is None:
+                self.show_message("Saisissez l’adresse de votre ami, par exemple 100.80.12.34:45990.", error=True)
                 self.btn_connect.setEnabled(True)
                 self.ip_edit.setFocus()
                 return
-            ok = controller.join_host(address, port)
-            message = "Demande envoyée. En attente des données de l’hôte…"
+            ticket=object();self._probe_ticket=ticket
+            self.show_message('Vérification du salon…')
+            def check():self.probe_finished.emit((ticket,target),probe(*target))
+            threading.Thread(target=check,daemon=True).start()
+            return
         else:
             ok = controller.start_hosting(port)
             message = f"Salon ouvert sur le port {port}. Vos amis peuvent vous rejoindre."
@@ -417,7 +439,29 @@ class CoopPanel(QFrame):
         self.show_message(message if ok else "Impossible d’ouvrir le salon. Consultez le journal pour les détails.", error=not ok)
         self.overlay.refresh_state()
 
+    def _joined_probe(self,request,answer):
+        ticket,target=request
+        if ticket is not self._probe_ticket:return
+        self._probe_ticket=None;self.btn_connect.setEnabled(True)
+        from src.network.probe import NO_HOST
+        if answer is None:return self.show_message(NO_HOST,error=True)
+        if not answer['compatible']:return self.show_message(answer['detail'],error=True)
+        if answer.get('count',0)==answer['max']:return self.show_message('Le salon est complet.',error=True)
+        ok=self.overlay.orchestrator.join_host(*target)
+        if ok and self.join_progress.isChecked():self.overlay.orchestrator.online_progress.auto=True
+        self.port_edit.setValue(target[1]);self.ip_edit.setText(target[0]);self.overlay.save_preferences()
+        self.show_message('Connexion au salon…' if ok else NO_HOST,error=not ok);self.overlay.refresh_state()
+
+    def copy_host_address(self):
+        address=self.host_addresses.currentData()
+        if address:QApplication.clipboard().setText(address);self.show_message('Adresse copiée. Envoyez-la à votre ami.')
+
+    def request_progress(self):
+        if self.overlay.orchestrator and self.overlay.orchestrator.online_progress.request():
+            self.show_message('Téléchargement de la progression. Une fenêtre vous permettra de choisir le fichier à remplacer.')
+
     def leave_session(self):
+        self._probe_ticket=None
         if self.overlay.orchestrator:
             self.overlay.orchestrator.leave_session()
         self.overlay.refresh_state()
@@ -442,6 +486,18 @@ class CoopPanel(QFrame):
         self.life_note.setText(notice)
         self.life_note.setVisible(bool(notice))
         mode = state.get("net_mode", "offline")
+        rows=state.get('hosting_addresses',[]) if mode=='host' else []
+        if rows!=getattr(self,'_address_rows',None):
+            self._address_rows=rows;self.host_addresses.clear()
+            for row in rows:self.host_addresses.addItem(f"{row['label']} · {row['address']}",row['address'])
+        self.host_addresses.setVisible(bool(rows));self.copy_address.setVisible(bool(rows))
+        self.network_hint.setText(state.get('network_hint','') if mode=='host' else state.get('connection_detail',''))
+        transfer=state.get('progress_transfer',{});receiving=transfer.get('state')=='receiving'
+        self.btn_progress.setVisible(mode=='client')
+        self.btn_progress.setEnabled(state.get('connection_state')=='connected' and not receiving and not self.overlay.preview_only)
+        self.progress_status.setText(f"Progression de l’hôte · {transfer.get('percent',0)} %" if receiving else
+            transfer.get('error','') if transfer.get('state')=='error' else
+            'Progression reçue · choisissez le fichier dans la fenêtre d’import.' if transfer.get('state')=='complete' else '')
         peers = [p for p in players if not p.get("is_self")]
         self.settings_page.update_state(state)
         # Only what asks for an action: a working tunic or game needs no sentence.
@@ -481,6 +537,8 @@ class CoopPanel(QFrame):
             self.soul_checkbox.setEnabled(mode == "host" and bool(state.get("in_game")) and not self.overlay.preview_only)
         if state.get("latency_ms") is not None:
             self.session_detail.setText(" · ".join(filter(None,(self.session_detail.text(),f"{state['latency_ms']} ms"))))
+        if state.get('loss_percent') is not None:
+            self.session_detail.setText(self.session_detail.text()+f" · pertes {state['loss_percent']:g} % · {state['quality']}")
         self.session_detail.setHidden(not self.session_detail.text())
         self.btn_tp.setEnabled(bool(state.get("can_teleport")) and not self.overlay.preview_only)
         text = "\n".join(logs)

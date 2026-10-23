@@ -6,6 +6,9 @@ import socket
 import time
 
 from src.network.coop_node import DEFAULT_COOP_UDP_PORT, MAX_PLAYERS, PROBE_PAD, PROTOCOL_VERSION
+from src.version import VERSION,mismatch
+
+NO_HOST='L’hôte ne répond pas : vérifiez Tailscale ou le port UDP 45990 chez l’hôte.'
 
 
 def parse_address(text, default_port=DEFAULT_COOP_UDP_PORT):
@@ -45,7 +48,9 @@ def probe(host, port, tries=3, timeout=.8):
                     count = reply.get("count")
                     return dict(ms=round((time.monotonic() - started) * 1000),
                                 count=count if type(count) is int and 0 < count <= MAX_PLAYERS else None,
-                                max=MAX_PLAYERS, compatible=reply.get("v") == PROTOCOL_VERSION)
+                                max=MAX_PLAYERS, version=reply.get('build'),
+                                detail=mismatch(reply.get('build')),
+                                compatible=reply.get("v") == PROTOCOL_VERSION and reply.get('build')==VERSION)
             except (socket.timeout, ConnectionResetError):
                 continue
             except OSError:

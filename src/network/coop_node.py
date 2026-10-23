@@ -17,9 +17,12 @@ from src.network.enemy_frames import EnemyFrames,context_for_wire
 from src.network.enemy_hub import EnemyHub
 from src.network.shared_loot import HostLootJournal,ClientLootJournal
 from src.network.shared_progress import HostProgressJournal,ClientProgressJournal
+from src.version import VERSION,mismatch
+from src.network.quality import LinkQuality
+from src.network.datagrams import Datagrams,encode as datagrams
 
 DEFAULT_COOP_UDP_PORT = 45990
-PROTOCOL_VERSION = 19
+PROTOCOL_VERSION = 20
 MAX_PLAYERS = 4
 PEER_TIMEOUT = 6.0
 MAX_DATAGRAM = 16384
@@ -100,11 +103,15 @@ def validate_player(data):
 
 
 class CoopNetworkNode:
-    def __init__(self, player_id, player_name, tunic_color="green", on_event_log=None,enemy_authority=False):
+    def __init__(self, player_id, player_name, tunic_color="green", on_event_log=None,enemy_authority=False,*,version=VERSION):
         self.player_id, self.player_name, self.tunic_color = player_id, player_name, tunic_color
         self.on_event_log = on_event_log
+        self.version=version;self.connection_detail='';self.quality=LinkQuality()
         self._lock = threading.RLock()
+        from src.network.save_transfer import SaveTransfer
+        self.save_transfer=SaveTransfer(self)
         self._sock = self._thread = None
+        self._datagrams=Datagrams()
         self._running = False
         self.mode = "offline"
         self.bind_port = DEFAULT_COOP_UDP_PORT
@@ -114,6 +121,7 @@ class CoopNetworkNode:
         self._join_nonce = ""
         self.peers = {}
         self._members = {}
+        self._peer_series = {}
         self._own_state = asdict(PlayerSnapshot(player_id=player_id, name=player_name, tunic_color=tunic_color))
         self._sequence = 0
         self._last_roster_seq = -1
@@ -219,6 +227,8 @@ class CoopNetworkNode:
             self.session_id = ""
             self.peers.clear()
             self._members.clear()
+            self._peer_series.clear()
+            self._datagrams=Datagrams()
             self._room_authorities.clear()
             self._pings.clear()
             self._pending_health.clear()
@@ -231,6 +241,8 @@ class CoopNetworkNode:
             self._sequence, self._last_roster_seq = 0, -1
             self._last_hello = self._last_ping = self._last_host_seen = 0
             self.latency_ms = self.shared_health = None
+            self.quality=LinkQuality();self.connection_detail=''
+            self.save_transfer.clear()
             self._soul_link = False
             self.health_epoch = ""
             self._health_seq = self.health_revision = 0
@@ -271,7 +283,7 @@ class CoopNetworkNode:
                         rows.pop()
                         raw=json.dumps(dict(payload,v=PROTOCOL_VERSION),separators=(',',':'),allow_nan=False).encode('utf-8')
             if len(raw) <= MAX_DATAGRAM:
-                sock.sendto(raw, endpoint)
+                for part in datagrams(raw):sock.sendto(part, endpoint)
         except (OSError, ValueError, TypeError):
             pass
 
@@ -289,6 +301,7 @@ class CoopNetworkNode:
             elif self.mode == "client" and self.connection_state == "connected":
                 self._sequence += 1
                 self._send_packet({"type": "STATE", "session": self.session_id, "seq": self._sequence,
+                    "nonce":self._join_nonce,
                     "player": clean, "health_epoch": self.health_epoch,
                     "health_events": list(self._pending_health)}, self.host_target)
 
@@ -324,8 +337,8 @@ class CoopNetworkNode:
                    "soul_link": self._soul_link, "health_epoch": self.health_epoch,
                    "shared_health": self.shared_health, "health_revision": self.health_revision,
                    "health_acked": self._health_acked,"world_rooms":self._world_rooms}
-        for endpoint in self._members:
-            self._send_packet(payload, endpoint)
+        for endpoint,member in self._members.items():
+            self._send_packet(dict(payload,nonce=member['nonce']), endpoint)
 
     def set_soul_link(self, enabled):
         with self._lock:
@@ -499,13 +512,14 @@ class CoopNetworkNode:
     def get_enemy_context(self):
         """This player's room for the shared enemies, whoever else is there."""
         with self._lock:
-            ready=(self.enemy_authority and bool(self.session_id)
-                   and (self.mode=='host' or self.connection_state=='connected'))
+            ready=(self.enemy_authority and (bool(self.session_id) or bool(self._world_session))
+                   and (self.mode=='host' or self.connection_state in ('connected','connecting')))
             return self.enemy_channel.select(self._room_context(self._own_state) if ready else None)
 
     def get_authoritative_enemies(self):
         """Latest shared states of this room (owner, ledger HP, owner's pose)."""
         with self._lock:
+            if self.mode=='client' and self.connection_state!='connected':return None
             if not self.get_enemy_context() or time.monotonic()-self.enemy_channel.updated>.5:return None
             return deepcopy(self.enemy_channel.states)
 
@@ -550,18 +564,20 @@ class CoopNetworkNode:
                 payload=room and self.enemy_hub.frame(member['pid'],room,self._enemy_positions(room),now)
                 if payload:
                     self._send_packet(dict(payload,type='ENEMY_STATE',session=self.session_id,nonce=member['nonce']),endpoint)
-        elif report:
+        elif report and self.connection_state=='connected':
             self._send_packet(dict(type='ENEMY_REPORT',session=self.session_id,nonce=self._join_nonce,
                                   context=context,report=report),self.host_target)
 
     def get_connection_info(self):
         with self._lock:
             return {"connection_state": self.connection_state, "latency_ms": self.latency_ms,
-                    "connected_players": len(self.peers) + 1, "session_id": self.session_id}
+                    "connected_players": len(self.peers) + 1, "session_id": self.session_id,
+                    "version":self.version,"connection_detail":self.connection_detail,**self.quality.summary()}
 
     def _tick(self):
         with self._lock:
             now = time.monotonic()
+            if self.connection_state in ('hosting','connected'):self.save_transfer.tick(now)
             self._world_tick(now)
             self._loot_tick(now)
             self._progress_tick(now)
@@ -578,9 +594,10 @@ class CoopNetworkNode:
                     self.shared_health = None
                     self.connection_state = "connecting"
                     self._log("Liaison perdue. Reconnexion automatique…")
-                if self.connection_state == "connecting" and now - self._last_hello >= 1:
+                if self.connection_state in ('connecting','duplicate') and now - self._last_hello >= 1:
                     self._last_hello = now
                     self._send_packet({"type": "HELLO", "nonce": self._join_nonce,
+                        "build":self.version,
                         "enemy_authority":self.enemy_authority,
                         "player": dict(self._own_state,name=self.player_name,tunic_color=self.tunic_color)}, self.host_target)
             if now - self._last_ping >= 1:
@@ -590,14 +607,18 @@ class CoopNetworkNode:
                     ident = secrets.token_hex(8)
                     self._pings[(endpoint, ident)] = now
                     self._send_packet({"type": "PING", "session": self.session_id, "id": ident}, endpoint)
-                self._pings = {key: stamp for key, stamp in self._pings.items() if now - stamp < PEER_TIMEOUT}
+                for key,stamp in list(self._pings.items()):
+                    if now-stamp>=2.5:
+                        self.quality.record(key[0],False);self._pings.pop(key,None)
 
     def _remove_member(self, endpoint):
         member = self._members.pop(endpoint, None)
         if member:
+            self.quality.forget(endpoint)
+            self._pings={key:stamp for key,stamp in self._pings.items() if key[0]!=endpoint}
+            self.save_transfer.jobs.pop(endpoint,None);self.save_transfer.outgoing.pop(endpoint,None)
             player = self.peers.pop(member["pid"], {})
-            self.enemy_hub.forget(member['pid'])
-            self._health_acked.pop(member["pid"], None)
+            # Une coupure conserve les acquittements ; seul un nouveau nonce les remet à zéro.
             self._log(f"{player.get('name', 'Un compagnon')} a quitté le salon.")
             self._publish_roster()
 
@@ -612,20 +633,28 @@ class CoopNetworkNode:
                 ident, pad = msg.get("id"), msg.get("pad")
                 if isinstance(ident, str) and len(ident) == 16 and isinstance(pad, str) and len(pad) >= PROBE_PAD:
                     self._send_packet({"type": "PROBE_REPLY", "id": ident,
-                                       "count": 1 + len(self._members), "max": MAX_PLAYERS}, addr)
+                                       "build":self.version,"count": 1 + len(self._members), "max": MAX_PLAYERS}, addr)
                 return
+            # Un refus d'une autre version doit rester lisible avant le filtre.
+            if (self.mode=='client' and addr==self.host_target and kind=='REJECT'
+                    and msg.get('nonce')==self._join_nonce and msg.get('reason')=='incompatible'):
+                if self.connection_state!='incompatible':
+                    self.connection_detail=mismatch(msg.get('build'),self.version);self._log(self.connection_detail)
+                self.connection_state='incompatible';return
             if msg.get("v") != PROTOCOL_VERSION:
                 if self.mode == "host" and kind == "HELLO":
-                    self._send_packet({"type": "REJECT", "reason": "incompatible", "nonce": msg.get("nonce")}, addr)
+                    self._send_packet({"type": "REJECT", "reason": "incompatible", "build":self.version,"nonce": msg.get("nonce")}, addr)
                 return
             if self.mode == "host" and kind == "HELLO":
+                if msg.get('build')!=self.version:
+                    self._send_packet(dict(type='REJECT',reason='incompatible',build=self.version,nonce=msg.get('nonce')),addr);return
                 player = validate_player(msg.get("player"))
                 nonce = msg.get("nonce")
                 if player is None or not isinstance(nonce, str) or len(nonce) != 32 or player["player_id"] == self.player_id:
                     return
                 enemies=msg.get('enemy_authority',False)
                 if type(enemies) is not bool or enemies!=self.enemy_authority:
-                    self._send_packet({'type':'REJECT','reason':'incompatible','nonce':nonce},addr)
+                    self._send_packet({'type':'REJECT','reason':'incompatible','build':self.version,'nonce':nonce},addr)
                     return
                 if addr not in self._members and len(self._members) >= MAX_PLAYERS - 1:
                     self._send_packet({"type": "REJECT", "reason": "full", "nonce": nonce}, addr)
@@ -639,15 +668,18 @@ class CoopNetworkNode:
                     self._remove_member(addr)
                     fresh = True
                 if fresh or self._members[addr]["nonce"] != nonce:
-                    self.enemy_hub.forget(pid)
+                    new_series=self._peer_series.get(pid)!=nonce
+                    self._peer_series[pid]=nonce
                     self._members[addr] = {"pid": pid, "nonce": nonce, "seq": -1, "last_seen": time.monotonic()}
                     self.peers[pid] = player
-                    self._health_acked.pop(pid, None)
-                    for state in self._world_host.rooms.values():state['acked'].pop(pid,None)
-                    self._loot_host.acked.pop(pid,None)
-                    self._progress_host.acked.pop(pid,None)
+                    if new_series:
+                        self.enemy_hub.forget(pid)
+                        self._health_acked.pop(pid, None)
+                        for state in self._world_host.rooms.values():state['acked'].pop(pid,None)
+                        self._loot_host.acked.pop(pid,None)
+                        self._progress_host.acked.pop(pid,None)
                 self._send_packet({"type": "WELCOME", "nonce": nonce, "session": self.session_id,
-                                   "enemy_authority":self.enemy_authority}, addr)
+                                   "build":self.version,"enemy_authority":self.enemy_authority}, addr)
                 if fresh:
                     self._log(f"{player['name']} a rejoint le salon.")
                 self._publish_roster()
@@ -661,11 +693,14 @@ class CoopNetworkNode:
                                "duplicate": "Ce profil est déjà connecté."}.get(self.connection_state, "Connexion refusée."))
                     return
                 if kind == "WELCOME" and msg.get("nonce") == self._join_nonce:
+                    if msg.get('build',self.version)!=self.version:
+                        self.connection_state='incompatible';self.connection_detail=mismatch(msg.get('build'),self.version);return
                     if msg.get('enemy_authority',False) is not self.enemy_authority:return
                     session = msg.get("session")
                     if not isinstance(session, str) or len(session) != 32:
                         return
-                    if session != self.session_id:
+                    if session != self._world_session:
+                        self.save_transfer.clear()
                         self._last_roster_seq = -1
                         self.peers.clear()
                         self._pending_health.clear()
@@ -681,6 +716,8 @@ class CoopNetworkNode:
                 return
             if self.mode == "host" and addr not in self._members:
                 return
+            if kind.startswith('SAVE_'):
+                self.save_transfer.handle(msg,addr);return
             if self.mode=='host' and kind=='ENEMY_REPORT':
                 member=self._members[addr];context=self._room_context(self.peers.get(member['pid']))
                 if (self.enemy_authority and context and msg.get('nonce')==member['nonce']
@@ -732,6 +769,7 @@ class CoopNetworkNode:
                     self._send_packet({"type": "PONG", "session": self.session_id, "id": ident}, addr)
                 elif (stamp := self._pings.pop((addr, ident), None)) is not None:
                     self.latency_ms = round((time.monotonic() - stamp) * 1000)
+                    self.quality.record(addr,True,self.latency_ms)
                 if self.mode == "host":
                     self._members[addr]["last_seen"] = time.monotonic()
                 else:
@@ -750,6 +788,7 @@ class CoopNetworkNode:
                 return
             if self.mode == "host" and kind == "STATE":
                 member = self._members[addr]
+                if msg.get('nonce')!=member['nonce']:return
                 seq = msg.get("seq")
                 player = validate_player(msg.get("player"))
                 if not _integer(seq, 0, 2**53) or seq <= member["seq"] or player is None or player["player_id"] != member["pid"]:
@@ -761,6 +800,7 @@ class CoopNetworkNode:
                 self._publish_roster()
                 return
             if self.mode == "client" and kind == "ROSTER":
+                if msg.get('nonce')!=self._join_nonce:return
                 seq, raw = msg.get("seq"), msg.get("players")
                 if not _integer(seq, 0, 2**53) or seq <= self._last_roster_seq or not isinstance(raw, list) or not 1 <= len(raw) <= MAX_PLAYERS:
                     return
@@ -806,7 +846,8 @@ class CoopNetworkNode:
             try:
                 data, addr = sock.recvfrom(MAX_DATAGRAM + 1)
                 if len(data) <= MAX_DATAGRAM:
-                    self._handle_packet(json.loads(data.decode("utf-8")), addr)
+                    data=self._datagrams.receive(data,addr,time.monotonic())
+                    if data is not None:self._handle_packet(json.loads(data.decode("utf-8")), addr)
             except (UnicodeError, ValueError, RecursionError, TypeError):
                 pass
             except OSError:

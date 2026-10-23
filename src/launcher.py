@@ -64,6 +64,11 @@ def gradient(row, rows):
 
 
 def version():
+    from src.version import VERSION
+    return VERSION
+
+
+def development_version():
     try:
         run = lambda *args: (subprocess.run(["git", *args], cwd=ROOT, capture_output=True, timeout=3,
                                             creationflags=NO_WINDOW).stdout or b"").decode("utf-8", "replace").strip()
@@ -398,17 +403,21 @@ def join_friend(screen):
     save_friend(*target)
     screen.status.friend = f"{target[0]}:{target[1]}"
     if answer is None:
-        screen.say("Pas de réponse : salon fermé, adresse, pare-feu ou VPN ?", "bad")
+        from src.network.probe import NO_HOST
+        screen.say(NO_HOST, "bad")
         return False
     if not answer["compatible"]:
-        screen.say("Salon trouvé, mais vos versions du mod diffèrent.", "bad")
+        screen.say(answer.get('detail',"Salon trouvé, mais vos versions du mod diffèrent. Mettez le mod à jour."), "bad")
         return False
     if answer["count"] is not None and answer["count"] >= answer["max"]:
         screen.say(f"Salon complet ({answer['count']}/{answer['max']}).", "bad")
         return False
     players = f" · {answer['count']}/{answer['max']} joueurs" if answer["count"] else ""
     print(f"  {GREEN}✔ Salon joignable · {answer['ms']} ms{players}{RESET}")
-    return play(screen, ["--join", f"{target[0]}:{target[1]}"])
+    shared=ask('Rejoindre avec la progression enregistrée de l’hôte ? Une copie de secours sera créée. [o/N] ')
+    arguments=["--join", f"{target[0]}:{target[1]}"]
+    if shared.lower() in ('o','oui'):arguments.append('--host-progress')
+    return play(screen, arguments)
 
 
 def play(screen, arguments=()):

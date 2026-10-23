@@ -84,28 +84,72 @@ serveur RPC, la manette et le réseau.
   <tr>
     <td valign="top">
       1. Lancez <code>run_coop.bat</code> → <b>Héberger un salon</b><br>
-      2. Donnez l'adresse affichée à vos amis<br>
-      3. Chargez votre sauvegarde
+      2. Chargez votre sauvegarde et enregistrez à une girouette<br>
+      3. Dans le menu coop (<b>F8 → Salon</b>), choisissez l'adresse adaptée et cliquez sur <b>Copier</b><br>
+      4. Envoyez cette adresse à vos amis et gardez le salon ouvert
     </td>
     <td valign="top">
       1. Lancez <code>run_coop.bat</code> → <b>Rejoindre un ami</b><br>
-      2. Entrez l'adresse de l'hôte (elle est testée avant d'entrer)<br>
-      3. Chargez votre sauvegarde
+      2. Collez l'adresse de l'hôte, par exemple <code>100.80.12.34</code> ou <code>100.80.12.34:45990</code> ; elle est testée avant d'entrer<br>
+      3. Choisissez de garder votre partie ou de <b>rejoindre avec la progression de l'hôte</b><br>
+      4. Chargez le fichier choisi dans Azahar
     </td>
   </tr>
 </table>
 
 > [!TIP]
 > **Pas sur le même réseau ?** Le salon utilise le port **UDP 45990**. Le plus
-> simple : installez tous **[Tailscale](https://tailscale.com/)** (ou Radmin
-> VPN) et utilisez l'adresse Tailscale de l'hôte. Sinon, l'hôte doit ouvrir ce
-> port sur sa box.
+> simple : installez tous **[Tailscale](https://tailscale.com/)**, connectez
+> vos PC au même réseau Tailscale (ou partagez le PC de l'hôte avec votre ami),
+> puis utilisez l'adresse **Tailscale** affichée chez l'hôte. ZeroTier et
+> Radmin VPN sont aussi reconnus. Sur le même Wi-Fi, utilisez **Réseau local**.
+
+Le mod tente d'ouvrir automatiquement le port sur la box de l'hôte par
+**UPnP**. S'il affiche une adresse **Internet · UPnP**, demandez à votre ami
+de la tester : certaines connexions ne permettent pas de recevoir directement
+des connexions. Sinon, utilisez Tailscale ou redirigez **UDP 45990** vers
+le PC de l'hôte dans les réglages de sa box. Autorisez Python dans le
+pare-feu Windows si celui-ci le demande.
+
+### Rejoindre avec la progression de l'hôte
+
+Cette option utilise la **dernière sauvegarde enregistrée** du fichier que
+l'hôte a chargé. Elle est proposée en rejoignant, et reste disponible dans
+**F8 → Salon → Reprendre la progression de l'hôte…**.
+
+1. Le téléchargement est vérifié avant utilisation ; les blocs perdus sont renvoyés.
+2. Votre progression actuelle est copiée dans un dossier daté de **`backups/`**.
+3. Vous choisissez **Fichier 1, 2 ou 3**. Seul ce fichier sera remplacé ;
+   les autres fichiers et vos réglages de sauvegarde sont conservés.
+4. Après votre confirmation, **votre Azahar se ferme proprement puis se rouvre**.
+   Enregistrez votre partie avant de confirmer. Chargez ensuite le fichier choisi.
+
+Vous pouvez annuler avant l'import. La sauvegarde de l'hôte reste intacte.
+Cette opération nécessite ALBW **EUR** et les données de sauvegarde créées
+par un premier lancement du jeu dans votre Azahar.
 
 > [!IMPORTANT]
-> Chacun joue **sa propre sauvegarde**, et ce qui change pendant la session est
-> partagé. Pour que tout corresponde, commencez au même point de l'histoire
-> (par exemple une nouvelle partie ensemble). Tous les joueurs doivent avoir la
-> **même version** du projet.
+> Chacun garde sa propre sauvegarde. L'import est facultatif ; sans lui,
+> commencez au même point de l'histoire pour que tout corresponde.
+> Tous les joueurs doivent avoir la **même version** du mod : le salon refuse
+> une version différente et indique qui doit se mettre à jour.
+
+Le menu **Salon** affiche la latence et les pertes estimées à partir des
+sondes de connexion. Une coupure déclenche une reconnexion automatique ;
+laissez l'hôte ouvert pour retrouver la même session.
+
+### Mettre le mod à jour
+
+Au lancement de **`run_coop.bat`**, une vérification rapide sur GitHub propose
+**« Mettre à jour maintenant ? (O/N) »** lorsqu'une nouvelle version est
+disponible. Répondez **O** pour télécharger et relancer ; **N** pour continuer.
+Fermez d'abord normalement le compagnon s'il est déjà ouvert.
+
+Les réglages et parties de **`.local/`**, l'environnement **`.venv/`** et les
+copies de **`backups/`** sont conservés. Les fichiers remplacés sont eux aussi
+mis à l'abri dans `backups/`. Les composants sont réinstallés si nécessaire.
+Sans Internet ou si GitHub ne répond pas, le lancement continue normalement.
+Les copies de développement et les copies Git modifiées à la main ne sont pas remplacées.
 
 ## 🧪 Essayer à deux sur un seul PC
 
@@ -143,7 +187,10 @@ titre.
 
 Vérifiez que <i>Enable RPC Server</i> est coché dans Azahar, que l'adresse de
 l'hôte est la bonne et que le port UDP 45990 est joignable chez lui (ou que
-vous êtes tous sur Tailscale).
+vous êtes tous sur le même réseau Tailscale). Dans Tailscale, le PC de l'hôte
+doit être accessible à l'ami. Utilisez son adresse en <code>100.…</code>, pas
+son adresse Wi-Fi si vous jouez à distance. Le test avant connexion indique
+si le salon répond ; regardez aussi le pare-feu Windows de l'hôte.
 </details>
 
 <details>
@@ -151,6 +198,47 @@ vous êtes tous sur Tailscale).
 
 Vérifiez que vous avez tous la même version du projet, la version EUR du jeu,
 et des sauvegardes au même point de l'histoire.
+Le bouton <b>Reprendre la progression de l'hôte…</b> permet de repartir de sa
+dernière sauvegarde, après une copie de secours de votre partie.
+</details>
+
+<details>
+<summary><b>On me dit que les versions sont différentes</b></summary>
+
+Le message affiche les deux versions et indique qui doit se mettre à jour.
+Fermez normalement le compagnon concerné puis relancez <code>run_coop.bat</code>
+et acceptez la mise à jour. Le numéro utilisé par le salon se trouve dans
+<code>VERSION</code> à la racine du projet.
+</details>
+
+<details>
+<summary><b>Comment retrouver ma progression après un import ?</b></summary>
+
+La fenêtre d'import indique le dossier daté sous <code>backups/</code> qui
+contient vos trois fichiers et <code>SaveCommon.bin</code>. Conservez-le.
+Pour une restauration manuelle, fermez d'abord Azahar et le compagnon, puis
+remettez ces fichiers dans le dossier de sauvegarde indiqué dans
+<code>verification.json</code>. Ne le faites jamais pendant qu'un Azahar
+utilisant ce dossier est ouvert.
+</details>
+
+<details>
+<summary><b>La liaison se coupe ou le compagnon saccade</b></summary>
+
+Le mod tente de se reconnecter tout seul. Gardez le salon de l'hôte ouvert et
+attendez quelques secondes. Regardez la latence et les pertes dans
+<b>F8 → Salon</b> ; essayez une connexion filaire et interrompez les gros
+téléchargements. Si le salon est fermé puis recréé, il s'agit d'une nouvelle session.
+</details>
+
+<details>
+<summary><b>La mise à jour ne se propose pas ou échoue</b></summary>
+
+Hors ligne, le jeu continue avec la version installée. Réessayez plus tard
+avec Internet. Une copie de développement ou une copie Git modifiée est laissée
+intacte : téléchargez alors un nouveau ZIP dans un autre dossier. Si une
+installation échoue, les anciens fichiers sont restaurés ; les copies
+précédentes restent dans <code>backups/</code>.
 </details>
 
 Le **journal** du menu coop explique ce qui se passe et peut être copié pour

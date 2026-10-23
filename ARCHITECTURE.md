@@ -10,10 +10,12 @@ sur disque.
 
 | Domaine | Fichiers |
 | --- | --- |
-| Lancement | `src/main.py` (orchestrateur), `src/local_session.py` (essai à deux) |
+| Lancement | `src/launcher.py` (accueil), `src/main.py` (orchestrateur), `src/local_session.py` (essai à deux), `src/updater.py` |
 | Liaison jeu | `src/rpc/` (RPC Azahar, GDB, pont hybride) |
 | Lecture d'état | `src/memory/albw_state.py`, `gameplay_state.py`, `world_actors.py`, `enemy_sync.py` |
-| Réseau | `src/network/coop_node.py` (salon, protocole 15), `world_journal.py` (props), `shared_loot.py`, `enemy_frames.py`, `enemy_hub.py` |
+| Réseau | `src/network/coop_node.py` (salon, protocole 20), `datagrams.py`, `world_journal.py` (props), `shared_loot.py`, `shared_progress.py`, `enemy_frames.py`, `enemy_hub.py` |
+| Connexion | `src/network/probe.py` (test sans rejoindre), `reachability.py` (adresses et UPnP), `quality.py` (latence et pertes de sondes) |
+| Import de progression | `src/network/save_transfer.py`, `src/online_progress.py`, `src/online_saves.py`, `src/save_import.py` |
 | Rendu du compagnon | `remote_model`, `appearance`, `equipment_model`, `wall_model`, `fresco_*`, `effect_*`, `render_state` |
 | Monde partagé | `world_sync.py` (orchestration), `world_native.py` (réserve et anneau natif), `mass_state.py` (lecteur), `foliage_motion.py`, `capture_hooks.py`, `grass_restore.py`, `combat_log.py` |
 | Ennemis | `enemy_authority.py`, `enemy_health.py`, `enemy_pose.py`, `enemy_impact_replay.py`, `combat_evidence.py`, `src/dynamic_enemies.py` |
@@ -68,3 +70,81 @@ Jeu A coupe → hook de capture → anneau natif (`world+0x100`) →
 (`world_dispatch.arm`) sur le thread du jeu → résultat → accusé. Les
 identités réseau sont `type, placement, xyz du lot, index, xyz` : jamais de
 pointeur.
+
+## Connexion et transport
+
+`VERSION` contient le numéro commun au lanceur et au salon. Le contrôle de
+version précède l'inscription d'un joueur ; un refus d'un ancien protocole
+reste lisible. Chaque session et chaque tentative de connexion ont leur
+identifiant aléatoire. États et listes de joueurs portent aussi le nonce de
+connexion : un ancien paquet ne peut pas remplacer la nouvelle instance.
+
+La connexion retente automatiquement après une coupure. L'hôte conserve
+les acquittements pour le même joueur et le même nonce ; un nouveau compagnon
+ouvre une nouvelle série. Les journaux monde, butin et progression renvoient
+les événements manquants, dans l'ordre et sans les appliquer deux fois. Les
+dégâts ennemis restent en attente d'acquittement pendant la reconnexion.
+
+Les messages logiques sont limités à 16 Kio. Les petits JSON restent directs ;
+les plus grands sont comprimés puis découpés si nécessaire en datagrammes
+d'au plus 1 200 octets. L'assemblage est séparé par adresse et identifiant,
+limité à 32 messages incomplets et expire après 1,5 seconde. La décompression
+est bornée. Les journaux assurent leurs renvois ; les poses sont rafraîchies
+par le prochain instantané.
+
+La découverte d'adresses et UPnP tournent en arrière-plan, sans dépendance
+supplémentaire. Une redirection existante n'est pas remplacée. Seule la
+redirection créée par cette instance est retirée à la fermeture du salon.
+L'adresse publique annoncée par la box n'est pas une preuve d'accessibilité
+depuis Internet ; le test de l'ami reste nécessaire. La qualité affichée est
+une estimation sur les dernières sondes acquittées, pas une mesure de tous
+les paquets du jeu.
+
+## Import de la progression enregistrée
+
+L'hôte lit uniquement le fichier actuellement chargé (`*(0x711DE8)+0x9BC`).
+Les trois emplacements EUR sont `Save_0.bin` à `Save_2.bin`, chacun de
+`0x1604` octets. Les CRC des blocs sont vérifiés aux offsets `0xDFC`,
+`0x13FC` et `0x15FC`. `SaveCommon.bin` est distinct (512 octets) et n'est
+jamais remplacé par celui de l'hôte.
+
+Le dossier est trouvé dans les données Azahar de l'exécutable associé au
+joueur (portable ou profil Windows, stockage personnalisé inclus), sous
+`sdmc/Nintendo 3DS/<id0>/<id1>/title/00040000/000ec400/data/00000001`.
+Une archive ambiguë est refusée. Les chemins locaux ne viennent jamais du réseau.
+
+Le salon transporte une enveloppe EUR de moins de 16 Kio, avec empreinte
+SHA-256. Blocs de 768 octets, fenêtre de quatre, acquittements, renvoi après
+450 ms et abandon après 45 secondes. La réception complète est vérifiée
+avant l'ouverture de l'assistant indépendant d'import.
+
+L'assistant crée une copie datée sous `backups/`, propose les fichiers 1 à 3,
+puis demande confirmation. Il ferme uniquement l'Azahar associé par sa
+fermeture normale ; aucune terminaison forcée. Après fermeture, une nouvelle
+copie intégrale et une vérification d'absence d'autre Azahar utilisant cette
+archive précèdent le remplacement atomique du seul fichier choisi. En cas
+d'échec d'écriture, l'ancien fichier est restauré. Le jeu et le compagnon
+sont rouverts avec les mêmes paramètres ; le joueur charge le fichier choisi.
+
+## Mise à jour
+
+Au démarrage, `src/updater.py` consulte l'API publique GitHub du dépôt
+`Benjifilly/ALBW-Online-Coop`. Lecture de `VERSION` et ZIP sont liés au même
+commit de `main`. La recherche est bornée et facultative ; une panne réseau
+n'empêche pas de jouer. Les copies de développement ou les copies Git
+modifiées sont ignorées. Au premier lancement d'un ZIP sans numéro de commit,
+les empreintes GitHub des fichiers publics permettent de reconnaître une
+révision différente même si `VERSION` n'a pas changé.
+
+Après accord O/N, seuls les fichiers d'exécution et de présentation sont
+installés. `.local/`, `.venv/`, `backups/` et Git sont conservés. L'archive
+est validée (chemins, liens, doublons et tailles), puis chaque fichier remplacé
+est copié et vérifié sous `backups/`. Un verrou empêche deux installations
+simultanées. Une propriété de patch active interdit le remplacement ; elle
+n'est jamais supprimée par la mise à jour.
+
+Les dépendances ne sont réinstallées que si `requirements.txt` change. En
+cas d'échec, les fichiers précédents sont restaurés et la réinstallation
+des anciennes dépendances est tentée. Le lanceur relit sa nouvelle version
+après réussite. `.local/updater.json` mémorise le commit installé et les
+empreintes pour distinguer les mises à jour des modifications personnelles.
