@@ -1,0 +1,1171 @@
+@ Closed EUR resolved-drop service. All callbacks execute on the game thread.
+.syntax unified
+.arm
+b loot_tick
+b loot_queue
+b loot_constructed
+b loot_random
+b loot_pick_rupee
+b loot_pick_heart
+b loot_pick_material
+b loot_pick_magic
+b loot_grant_observer
+b loot_itemget_observer
+b loot_health_observer
+b loot_pick_fairy
+b loot_grass
+b loot_begin
+b loot_finish
+b loot_allocate
+b loot_find_actor
+b loot_actor
+b loot_death
+
+@ r0 = control or 0. No title/demo callback is a grant lease.
+loot_control:
+ldr r0, =0x7aff70
+ldr r0, [r0]
+cmp r0, #0
+bxeq lr
+ldr r1, [r0]
+ldr r2, =0x4c4f5431
+cmp r1, r2
+movne r0, #0
+bxne lr
+ldr r1, [r0, #4]
+cmp r1, #1
+movne r0, #0
+bxne lr
+ldr r1, [r0, #8]
+cmp r1, #0
+moveq r0, #0
+bxeq lr
+ldr r1, =0x712468
+ldr r1, [r1]
+cmp r1, #0
+moveq r0, #0
+bxeq lr
+ldrb r1, [r1, #0x25]
+cmp r1, #0
+movne r0, #0
+bxne lr
+ldr r1, =0x70fb60
+ldr r1, [r1]
+ldr r1, [r1, #0x10]
+ldr r2, =0x7afb00
+ldr r3, [r2, #0x18]
+cmp r1, r3
+movne r0, #0
+bxne lr
+ldr r3, [r1, #0x2cc]
+ldr r12, [r2, #0x6c]
+cmp r3, r12
+movne r0, #0
+bxne lr
+ldr r1, [r1, #0x600]
+ldr r2, [r2, #0x70]
+cmp r1, r2
+movne r0, #0
+bx lr
+
+@ Allocates one complete break scope even when it generates no drop.
+@ r0=source, r1=index, r2=kind; returns owned cause row or0.
+loot_begin:
+push {r4-r8,lr}
+mov r4, r0
+mov r5, r1
+mov r6, r2
+bl loot_control
+movs r7, r0
+beq loot_begin_end
+ldr r0, =0x709df8
+ldr r0, [r0]
+ldrb r1, [r0, #0x18]
+ldr r2, [r7, #0xc4]
+cmp r1, r2
+bne loot_begin_refuse
+ldr r1, [r0, #0x1c]
+ldr r2, [r7, #0xc8]
+cmp r1, r2
+bne loot_begin_refuse
+ldr r1, [r7, #0xcc]
+ldr r2, [r7, #0xd0]
+orrs r0, r1, r2
+beq loot_begin_refuse
+ldr r0, [r7, #0x1c]
+cmp r0, #0
+bne loot_begin_end
+ldr r0, [r7, #0x10]
+cmp r0, #4096
+bhs loot_full
+add r8, r7, #0x10000
+add r8, r8, r0, lsl #7
+add r0, r0, #1
+str r0, [r8]
+str r0, [r7, #0x10]
+ldr r1, =0x709df8
+ldr r1, [r1]
+ldrb r0, [r1, #0x18]
+str r0, [r8, #4]
+ldr r0, [r1, #0x1c]
+str r0, [r8, #8]
+str r1, [r8, #0x54]
+ldr r0, [r7, #0xcc]
+str r0, [r8, #0x68]
+ldr r0, [r7, #0xd0]
+str r0, [r8, #0x6c]
+str r6, [r8, #12]
+ldr r0, [r4, #0x2cc]
+str r0, [r8, #0x10]
+str r5, [r8, #0x14]
+ldr r0, [r4, #0x2d0]
+ldr r0, [r0, #8]
+str r0, [r8, #0x18]
+ldrsh r0, [r4, #0x58]
+str r0, [r8, #0x1c]
+add r0, r4, #8
+ldm r0, {r1-r3}
+add r0, r8, #0x20
+stm r0, {r1-r3}
+cmp r6, #1
+bne loot_begin_record
+ldr r0, [r4, #0x480]
+ldr r0, [r0, r5, lsl #2]
+add r0, r0, #4
+ldm r0, {r1-r3}
+add r0, r8, #0x58
+stm r0, {r1-r3}
+loot_begin_record:
+mov r0, #0
+str r0, [r8, #0x2c]
+str r0, [r8, #0x30]
+str r8, [r7, #0x1c]
+mov r0, r8
+b loot_begin_end
+loot_full:
+mov r0, #1
+str r0, [r7, #0x18]
+mov r0, #0
+loot_begin_refuse:
+mov r0, #0
+loot_begin_end:
+pop {r4-r8,pc}
+
+loot_finish:
+push {r0-r3,r12,lr}
+bl loot_control
+cmp r0, #0
+beq loot_finish_end
+ldr r1, [r0, #0x1c]
+cmp r1, #0
+movne r2, #1
+strne r2, [r1, #0x2c]
+mov r1, #0
+str r1, [r0, #0x1c]
+loot_finish_end:
+pop {r0-r3,r12,pc}
+
+loot_grass:
+push {r4-r8,lr}
+mov r4, r0
+mov r5, r1
+mov r2, #1
+bl loot_begin
+mov r6, r0
+mov r0, r4
+mov r1, r5
+bl loot_original_grass
+cmp r6, #0
+beq loot_grass_done
+bl loot_finish
+loot_grass_done:
+pop {r4-r8,pc}
+loot_original_grass:
+push {r4,lr}
+ldr pc, =0x2356d8
+
+loot_random:
+push {r4-r10,lr}
+mov r4, r0
+mov r5, r1
+mov r6, r2
+mov r7, r3
+mov r8, lr
+bl loot_control
+movs r9, r0
+beq loot_random_original
+@ The enemy authority owns death drops; follower native deaths do not reroll.
+ldr r0, =0x4f49ec
+cmp r8, r0
+bne loot_random_scope
+ldr r0, [r9, #0x28]
+cmp r0, #0
+moveq r0, #0
+beq loot_random_end
+loot_random_scope:
+ldr r10, [r9, #0x1c]
+cmp r10, #0
+bne loot_random_original
+ldrsh r0, [r4, #0x58]
+cmp r0, #0
+bgt loot_random_placed
+@ A thrown pot keeps the identity of the Mass pot it was lifted from.
+mov r0, r4
+bl loot_carried
+cmp r0, #0
+bne loot_random_carried
+ldrsh r0, [r4, #0x58]
+cmn r0, #1
+bne loot_random_original
+@ Negative placements require this service's exact locally constructed enemy.
+ldr r0, =0x4f49ec
+cmp r8, r0
+bne loot_random_original
+mov r0, r4
+bl loot_find_actor
+cmp r0, #0
+beq loot_random_original
+ldr r1, [r0, #0x48]
+cmp r1, #2
+beq loot_random_end
+ldr r1, [r0, #0x14]
+ldr r2, =526
+cmp r1, r2
+ldrne r2, =529
+cmpne r1, r2
+ldrne r2, =531
+cmpne r1, r2
+ldrne r2, =585
+cmpne r1, r2
+bne loot_random_original
+ldr r10, [r0]
+mov r0, r4
+mov r1, #0
+mov r2, #3
+bl loot_begin
+cmp r0, #0
+strne r10, [r0, #0x70]
+mov r10, r0
+mov r9, #1
+b loot_random_call
+loot_random_placed:
+mov r0, r4
+mov r1, #0
+mov r2, #2
+@ Pot and rock updates hold the instance index in a callee-saved register
+@ (pot 4BAE2C: r4, saved at [sp]; rock 4D66CC: r5, at [sp+4]): one Mass
+@ cause per instance instead of one for the whole batch.
+ldr r3, =0x4bae2c
+cmp r8, r3
+ldreq r12, =0x6eb390
+ldreq r1, [sp]
+beq loot_random_mass
+ldr r3, =0x4d66cc
+cmp r8, r3
+bne loot_random_begin
+ldr r12, =0x6ec3b4
+ldr r1, [sp, #4]
+loot_random_mass:
+ldr r3, [r4]
+cmp r3, r12
+movne r1, #0
+bne loot_random_begin
+ldr r3, [r4, #0x478]
+cmp r1, r3
+movhs r1, #0
+bhs loot_random_begin
+@ A pot another player threw breaks here only for its sound and shards
+@ (carried_mirror.arm): its lottery was already decided by the thrower.
+push {r1}
+mov r0, r4
+bl loot_suppressed
+pop {r1}
+cmp r0, #0
+bne loot_random_end
+mov r0, r4
+mov r2, #1
+loot_random_begin:
+bl loot_begin
+mov r10, r0
+mov r9, #1
+b loot_random_call
+loot_random_carried:
+mov r2, #1
+bl loot_begin
+mov r10, r0
+mov r9, #1
+b loot_random_call
+loot_random_original:
+mov r9, #0
+loot_random_call:
+mov r0, r4
+mov r1, r5
+mov r2, r6
+mov r3, r7
+bl loot_original_random
+@ Only this wrapper's own scope is finished, never its enclosing grass scope.
+cmp r9, #1
+bne loot_random_end
+bl loot_finish
+loot_random_end:
+pop {r4-r10,pc}
+loot_original_random:
+push {r0-r5,lr}
+ldr pc, =0x14ec04
+
+@ r0=batch, r1=index -> 1 (and the one-shot slot cleared) when the world's
+@ carried mirror replays this instance's break (world+0x627F0), else 0.
+loot_suppressed:
+push {r4,lr}
+ldr r2, =0x7afffc
+ldr r2, [r2]
+cmp r2, #0x14000000
+blo loot_suppressed_no
+cmp r2, #0x1c000000
+bhs loot_suppressed_no
+tst r2, #3
+bne loot_suppressed_no
+ldr r3, [r2]
+ldr r4, =0x574f5231
+cmp r3, r4
+bne loot_suppressed_no
+add r2, r2, #0x62000
+add r2, r2, #0x7f0
+ldr r3, [r2]
+cmp r3, #0
+beq loot_suppressed_no
+ldr r4, [r0, #0x2cc]
+cmp r3, r4
+bne loot_suppressed_no
+ldr r3, [r2, #4]
+cmp r3, r1
+bne loot_suppressed_no
+mov r0, #0
+str r0, [r2]
+mov r0, #1
+pop {r4,pc}
+loot_suppressed_no:
+mov r0, #0
+pop {r4,pc}
+
+@ Carried table written by the world's pot_carry.arm (world+0x61F10, 8 x 16:
+@ actor handle, batch handle, index, serial). r0=actor -> r0=live pot batch
+@ (verified through the actor table) or 0, r1=index.
+loot_carried:
+push {r4-r6,lr}
+mov r4, r0
+ldr r0, =0x7afffc
+ldr r5, [r0]
+cmp r5, #0x14000000
+blo loot_carried_none
+cmp r5, #0x1c000000
+bhs loot_carried_none
+tst r5, #3
+bne loot_carried_none
+ldr r0, [r5]
+ldr r1, =0x574f5231
+cmp r0, r1
+bne loot_carried_none
+ldr r0, [r5, #4]
+cmp r0, #1
+bne loot_carried_none
+add r5, r5, #0x61000
+add r5, r5, #0xf10
+ldr r6, [r4, #0x2cc]
+cmp r6, #0
+beq loot_carried_none
+mov r2, #0
+loot_carried_find:
+add r3, r5, r2, lsl #4
+ldr r0, [r3]
+cmp r0, r6
+beq loot_carried_found
+add r2, r2, #1
+cmp r2, #8
+blo loot_carried_find
+b loot_carried_none
+loot_carried_found:
+ldr r12, [r3, #4]
+ldr r1, [r3, #8]
+ldr r0, =0x706e20
+ldr r0, [r0]
+add r0, r0, #0x3d000
+add r0, r0, #0xbc0
+ldr r2, [r0]
+ldr r3, [r0, #8]
+mov r0, r12, lsr #22
+add r2, r2, r0, lsl #2
+cmp r2, r3
+bhs loot_carried_none
+ldr r0, [r2]
+cmp r0, #0
+beq loot_carried_none
+ldr r2, [r0, #0x2cc]
+cmp r2, r12
+bne loot_carried_none
+ldr r2, [r0]
+ldr r3, =0x6eb390
+cmp r2, r3
+bne loot_carried_none
+ldrb r2, [r0, #0x2d7]
+cmp r2, #0
+bne loot_carried_none
+ldr r2, [r0, #0x478]
+cmp r1, r2
+bhs loot_carried_none
+pop {r4-r6,pc}
+loot_carried_none:
+mov r0, #0
+pop {r4-r6,pc}
+
+@ The common native enemy death owns the whole lottery, including its indirect
+@ 14FD6C path and a legitimate empty outcome. The original routine still retires
+@ the actor; followers only suppress its optional new lottery (r1=0).
+loot_death:
+push {r4-r10,lr}
+mov r4, r0
+mov r5, r1
+mov r6, r2
+mov r7, r3
+mov r9, #0
+bl loot_control
+movs r8, r0
+beq loot_death_original
+ldr r0, [r8, #0x1c]
+cmp r0, #0
+bne loot_death_original
+ldrsh r0, [r4, #0x58]
+cmp r0, #0
+bgt loot_death_static
+cmn r0, #1
+bne loot_death_original
+mov r0, r4
+bl loot_find_actor
+cmp r0, #0
+beq loot_death_original
+ldr r1, [r0, #0x14]
+ldr r2, =526
+cmp r1, r2
+ldrne r2, =529
+cmpne r1, r2
+ldrne r2, =531
+cmpne r1, r2
+ldrne r2, =585
+cmpne r1, r2
+bne loot_death_original
+ldr r1, [r0, #0x48]
+cmp r1, #2
+beq loot_death_no_lottery
+ldr r10, [r0]
+mov r2, #3
+b loot_death_authority
+loot_death_static:
+mov r10, #0
+mov r2, #2
+loot_death_authority:
+ldr r0, [r8, #0x28]
+cmp r0, #0
+beq loot_death_no_lottery
+mov r0, r4
+mov r1, #0
+bl loot_begin
+cmp r0, #0
+beq loot_death_original
+str r10, [r0, #0x70]
+mov r9, #1
+b loot_death_original
+loot_death_no_lottery:
+mov r5, #0
+loot_death_original:
+mov r0, r4
+mov r1, r5
+mov r2, r6
+mov r3, r7
+bl loot_original_death
+mov r10, r0
+cmp r9, #1
+bne loot_death_done
+bl loot_finish
+loot_death_done:
+mov r0, r10
+pop {r4-r10,pc}
+loot_original_death:
+push {r4,r5,lr}
+ldr pc, =0x4f4978
+
+@ Recognize only the concrete drop families corroborated on this executable.
+loot_kind:
+ldr r0, [r0]
+ldr r0, [r0, #8]
+cmp r0, #45
+cmpne r0, #63
+cmpne r0, #64
+cmpne r0, #66
+cmpne r0, #106
+cmpne r0, #107
+cmpne r0, #129
+cmpne r0, #130
+cmpne r0, #131
+bxeq lr
+ldr r1, =585
+cmp r0, r1
+ldrne r1, =526
+cmpne r0, r1
+ldrne r1, =529
+cmpne r0, r1
+ldrne r1, =531
+cmpne r0, r1
+movne r0, #0
+bx lr
+
+@ r0 descriptor, r1 local queue slot (0 for immediate), r2 cause or0.
+loot_allocate:
+push {r4-r11,r12,lr}
+mov r4, r0
+mov r5, r1
+mov r6, r2
+bl loot_control
+movs r7, r0
+beq loot_alloc_end
+mov r0, r4
+bl loot_kind
+cmp r0, #0
+beq loot_alloc_end
+mov r9, r0
+ldr r8, [r7, #0x20]
+cmp r8, #4096
+bhs loot_alloc_full
+cmp r6, #0
+beq loot_alloc_space
+ldr r0, [r6, #0x30]
+cmp r0, #8
+bhs loot_alloc_full
+loot_alloc_space:
+add r10, r7, #0xa0000
+add r10, r10, r8, lsl #7
+add r8, r8, #1
+str r8, [r10]
+str r9, [r10, #0x14]
+cmp r6, #0
+beq loot_alloc_remote
+ldr r0, [r6, #4]
+str r0, [r10, #4]
+ldr r0, [r6, #8]
+str r0, [r10, #8]
+ldr r0, [r6]
+str r0, [r10, #12]
+ldr r0, [r6, #0x30]
+str r0, [r10, #0x10]
+add r1, r6, #0x34
+str r8, [r1, r0, lsl #2]
+add r0, r0, #1
+str r0, [r6, #0x30]
+b loot_alloc_copy
+loot_alloc_remote:
+ldr r0, [r7, #0x44]
+str r0, [r10, #4]
+ldr r0, [r7, #0x48]
+str r0, [r10, #8]
+mov r0, #1
+str r0, [r10, #0x48]
+loot_alloc_copy:
+add r0, r4, #4
+add r1, r10, #0x18
+ldm r0!, {r2,r3,r8,r9,r11,r12}
+stm r1!, {r2,r3,r8,r9,r11,r12}
+ldr r0, [r4, #0x20]
+str r0, [r10, #0x30]
+ldr r0, [r4, #0x28]
+str r0, [r10, #0x34]
+ldr r0, [r4, #0x2c]
+str r0, [r10, #0x38]
+str r5, [r10, #0x3c]
+ldr r0, [r10]
+str r0, [r7, #0x20]
+mov r0, r10
+b loot_alloc_end
+loot_alloc_full:
+mov r0, #1
+str r0, [r7, #0x18]
+mov r0, #0
+loot_alloc_end:
+pop {r4-r11,r12,pc}
+
+loot_queue:
+push {r0-r12,lr}
+mrs r8, cpsr
+bl loot_control
+cmp r0, #0
+beq loot_queue_end
+ldr r2, [r0, #0x1c]
+cmp r2, #0
+beq loot_queue_end
+mov r0, r5
+mov r1, r5
+bl loot_allocate
+loot_queue_end:
+msr cpsr_f, r8
+pop {r0-r12,lr}
+str r0, [r5, #0x2c0]
+ldr pc, =0x4c4534
+
+loot_constructed:
+push {r0-r12,lr}
+mrs r8, cpsr
+mov r6, r5
+mov r7, r9
+bl loot_control
+movs r4, r0
+beq loot_constructed_end
+ldr r5, [r4, #0x2c]
+cmp r5, #0
+bne loot_bind
+ldr r0, [r4, #0x20]
+add r5, r4, #0xa0000
+add r5, r5, r0, lsl #7
+loot_find_queue:
+cmp r0, #0
+beq loot_construct_immediate
+sub r5, r5, #128
+sub r0, r0, #1
+ldr r1, [r5, #0x3c]
+cmp r1, r6
+bne loot_find_queue
+ldr r1, =0x709df8
+ldr r1, [r1]
+ldrb r2, [r1, #0x18]
+ldr r3, [r5, #4]
+cmp r2, r3
+bne loot_find_queue
+ldr r2, [r1, #0x1c]
+ldr r3, [r5, #8]
+cmp r2, r3
+bne loot_find_queue
+ldr r1, [r5, #0x40]
+cmp r1, #0
+bne loot_find_queue
+b loot_bind
+loot_construct_immediate:
+ldr r2, [r4, #0x1c]
+cmp r2, #0
+beq loot_constructed_end
+mov r0, r6
+mov r1, #0
+bl loot_allocate
+movs r5, r0
+beq loot_constructed_end
+loot_bind:
+mov r0, #0
+str r0, [r5, #0x3c]
+cmp r7, #0
+beq loot_constructed_end
+ldr r0, [r7, #0x2d0]
+ldr r0, [r0, #8]
+ldr r1, [r5, #0x14]
+cmp r0, r1
+bne loot_constructed_end
+str r7, [r5, #0x40]
+ldr r0, [r7, #0x2cc]
+str r0, [r5, #0x44]
+ldr r0, =0x709df8
+ldr r0, [r0]
+str r0, [r5, #0x54]
+ldr r0, [r5, #0x14]
+ldr r1, =526
+cmp r0, r1
+ldrne r1, =529
+cmpne r0, r1
+ldrne r1, =531
+cmpne r0, r1
+ldrne r1, =585
+cmpne r0, r1
+bne loot_constructed_end
+ldr r0, [r7, #0x508]
+str r0, [r5, #0x60]
+loot_constructed_end:
+msr cpsr_f, r8
+pop {r0-r12,lr}
+mov r0, r9
+ldr pc, =0x4c4a80
+
+@ Resolve a recorded actor at use time; never trust a pointer after a reload.
+@ r0=row -> r0=actor or0. Does not require the origin room for inventory grants.
+loot_actor:
+ldr r1, =0x709df8
+ldr r1, [r1]
+ldr r2, [r0, #0x54]
+cmp r1, r2
+bne loot_actor_bad
+ldrb r2, [r1, #0x18]
+ldr r3, [r0, #4]
+cmp r2, r3
+bne loot_actor_bad
+ldr r2, [r1, #0x1c]
+ldr r3, [r0, #8]
+cmp r2, r3
+bne loot_actor_bad
+ldr r1, =0x706e20
+ldr r1, [r1]
+add r1, r1, #0x3d000
+add r1, r1, #0xbc0
+ldr r2, [r1]
+ldr r1, [r1, #8]
+ldr r3, [r0, #0x44]
+mov r12, r3, lsr #22
+add r2, r2, r12, lsl #2
+cmp r2, r1
+bhs loot_actor_bad
+ldr r1, [r2]
+ldr r2, [r0, #0x40]
+cmp r1, r2
+bne loot_actor_bad
+cmp r1, #0
+beq loot_actor_bad
+ldr r2, [r1, #0x2cc]
+cmp r2, r3
+bne loot_actor_bad
+ldr r2, [r1, #0x2d0]
+ldr r2, [r2, #8]
+ldr r3, [r0, #0x14]
+cmp r2, r3
+moveq r0, r1
+bxeq lr
+loot_actor_bad:
+mov r0, #0
+bx lr
+
+@ r0=actor -> bound row or0. Called before any native pickup begins.
+loot_find_actor:
+push {r4-r7,r12,lr}
+mov r4, r0
+bl loot_control
+cmp r0, #0
+beq loot_find_actor_end
+mov r5, r0
+ldr r6, [r5, #0x20]
+add r7, r5, #0xa0000
+add r7, r7, r6, lsl #7
+loot_find_actor_loop:
+cmp r6, #0
+beq loot_find_actor_zero
+sub r6, r6, #1
+sub r7, r7, #128
+ldr r0, [r7, #0x40]
+cmp r0, r4
+bne loot_find_actor_loop
+mov r0, r7
+bl loot_actor
+cmp r0, r4
+moveq r0, r7
+beq loot_find_actor_end
+b loot_find_actor_loop
+loot_find_actor_zero:
+mov r0, #0
+loot_find_actor_end:
+pop {r4-r7,r12,pc}
+
+loot_pick_rupee: mov r12, #0
+b loot_pickup
+loot_pick_heart: mov r12, #1
+b loot_pickup
+loot_pick_material: mov r12, #2
+b loot_pickup
+loot_pick_magic: mov r12, #3
+b loot_pickup
+loot_pick_fairy: mov r12, #4
+loot_pickup:
+push {r4-r11,r12,lr}
+mov r8, r12
+mov r4, r0
+mov r5, r1
+mov r6, r2
+mov r7, r3
+bl loot_find_actor
+movs r9, r0
+beq loot_pickup_call
+ldr r0, [r9, #0x4c]
+cmp r0, #0
+bne loot_pickup_remove
+ldr r0, [r9, #0x48]
+cmp r0, #2
+beq loot_pickup_remove
+cmp r0, #1
+movne r0, #0
+bne loot_pickup_end
+loot_pickup_call:
+mov r0, r4
+mov r1, r5
+mov r2, r6
+mov r3, r7
+cmp r8, #0
+beq loot_pick_call_rupee
+cmp r8, #1
+beq loot_pick_call_heart
+cmp r8, #2
+beq loot_pick_call_material
+cmp r8, #3
+beq loot_pick_call_magic
+cmp r8, #4
+beq loot_pick_call_fairy
+mov r0, #0
+b loot_pickup_end
+loot_pick_call_rupee:
+bl loot_original_rupee
+b loot_pick_call_done
+loot_pick_call_heart:
+bl loot_original_heart
+b loot_pick_call_done
+loot_pick_call_material:
+bl loot_original_material
+b loot_pick_call_done
+loot_pick_call_magic:
+bl loot_original_magic
+b loot_pick_call_done
+loot_pick_call_fairy:
+bl loot_original_fairy
+loot_pick_call_done:
+mov r10, r0
+cmp r9, #0
+beq loot_pickup_return
+ldrb r0, [r4, #0x2d7]
+cmp r0, #0
+beq loot_pickup_return
+mov r0, #1
+str r0, [r9, #0x4c]
+loot_pickup_return:
+mov r0, r10
+b loot_pickup_end
+loot_pickup_remove:
+mov r0, #1
+strb r0, [r4, #0x2d7]
+mov r0, #0
+loot_pickup_end:
+pop {r4-r11,r12,pc}
+loot_original_rupee:
+push {r4,r5,lr}
+ldr pc, =0x1d723c
+loot_original_heart:
+push {r4,lr}
+ldr pc, =0x4e883c
+loot_original_material:
+push {r4,r5,lr}
+ldr pc, =0x1cd2e8
+loot_original_magic:
+push {r4,r5,lr}
+ldr pc, =0x2882e0
+loot_original_fairy:
+push {r4,lr}
+ldr pc, =0x4e757c
+
+loot_itemget_observer:
+push {r4-r10,lr}
+mov r5, r0
+mov r6, r1
+mov r7, r2
+mov r8, r3
+mov r0, r4
+bl loot_find_actor
+mov r9, r0
+mov r0, r5
+mov r1, r6
+mov r2, r7
+mov r3, r8
+bl loot_original_itemget
+mov r10, r0
+cmp r0, #0
+beq loot_itemget_end
+bl loot_control
+cmp r0, #0
+beq loot_itemget_end
+str r9, [r0, #0x90]
+str r6, [r0, #0x94]
+loot_itemget_end:
+mov r0, r10
+pop {r4-r10,pc}
+loot_original_itemget:
+push {r3,lr}
+ldr pc, =0x36172c
+
+loot_grant_observer:
+push {r4-r8,lr}
+mov r4, r0
+mov r5, r1
+mov r7, lr
+bl loot_original_grant
+mov r6, r0
+cmp r0, #0
+beq loot_grant_end
+ldr r1, =0x28ee1c
+cmp r7, r1
+bne loot_grant_end
+bl loot_control
+cmp r0, #0
+beq loot_grant_end
+ldr r1, [r0, #0xac]
+cmp r1, #0
+bne loot_grant_end
+ldr r1, [r0, #0x94]
+cmp r1, r4
+bne loot_grant_end
+ldr r1, [r0, #0x90]
+cmp r1, #0
+movne r2, #1
+strne r2, [r1, #0x4c]
+mov r1, #0
+str r1, [r0, #0x90]
+loot_grant_end:
+mov r0, r6
+pop {r4-r8,pc}
+loot_original_grant:
+push {r4-r6,lr}
+ldr pc, =0x344814
+
+loot_health_observer:
+push {r4-r10,lr}
+mov r5, r0
+mov r6, r1
+mov r7, r2
+mov r8, r3
+mov r9, lr
+mov r0, r4
+bl loot_find_actor
+mov r10, r0
+mov r0, r5
+mov r1, r6
+mov r2, r7
+mov r3, r8
+bl loot_original_health
+ldr r1, =0x4e6dec
+cmp r9, r1
+cmp r0, #0
+beq loot_health_end
+ldr r1, =0x4e6dec
+cmp r9, r1
+bne loot_health_end
+cmp r10, #0
+movne r1, #1
+strne r1, [r10, #0x4c]
+loot_health_end:
+pop {r4-r10,pc}
+loot_original_health:
+ldr r0, [r0, #0x10]
+ldr pc, =0x1dd488
+
+@ Build one local descriptor from closed scalar input, never from peer pointers.
+@ r4=control; input +100:type,+104:position,+110:aux,+11C:yaw,+120:params.
+loot_build:
+push {r5-r8,r12,lr}
+add r5, r4, #0xa000
+mov r0, r5
+ldr r12, =0x2dff58
+blx r12
+ldr r0, [r4, #0x100]
+ldr r12, =0x19b04c
+blx r12
+str r0, [r5]
+add r0, r4, #0x104
+add r1, r5, #4
+ldm r0, {r2,r3,r6,r7,r8,r12}
+stm r1, {r2,r3,r6,r7,r8,r12}
+ldr r0, [r4, #0x11c]
+str r0, [r5, #0x20]
+ldr r0, [r4, #0x120]
+str r0, [r5, #0x28]
+ldr r0, [r4, #0x124]
+str r0, [r5, #0x2c]
+ldr r0, =0x70c8e0
+ldr r0, [r0]
+ldr r12, =0x581d38
+blx r12
+strh r0, [r5, #0x50]
+mov r0, r5
+pop {r5-r8,r12,pc}
+
+@ Commands:1create+spawn,2spawn bound row,3approve,4discard,5grant,
+@ 6create placeholder. Claimed state is published before entering native code.
+loot_tick:
+push {r4-r11,r12,lr}
+vpush {d0-d7}
+vmrs r0, fpscr
+push {r0,r1}
+bl loot_control
+movs r4, r0
+beq loot_tick_end
+ldr r0, [r4, #8]
+sub r0, r0, #1
+str r0, [r4, #8]
+ldr r0, [r4, #12]
+add r0, r0, #1
+str r0, [r4, #12]
+ldr r5, [r4, #0x30]
+ldr r0, [r4, #0x34]
+cmp r5, r0
+beq loot_tick_end
+mov r0, #2
+str r0, [r4, #0xbc]
+ldr r6, [r4, #0x38]
+mov r7, #0
+cmp r6, #1
+cmpne r6, #6
+beq loot_cmd_create
+ldr r0, [r4, #0x3c]
+ldr r1, [r4, #0x20]
+cmp r0, #0
+beq loot_cmd_ack
+cmp r0, r1
+bhi loot_cmd_ack
+sub r0, r0, #1
+add r7, r4, #0xa0000
+add r7, r7, r0, lsl #7
+cmp r6, #2
+beq loot_cmd_spawn_existing
+cmp r6, #3
+moveq r0, #1
+streq r0, [r7, #0x48]
+beq loot_cmd_success
+cmp r6, #4
+moveq r0, #2
+streq r0, [r7, #0x48]
+beq loot_cmd_remove
+cmp r6, #5
+beq loot_cmd_grant
+b loot_cmd_ack
+loot_cmd_create:
+bl loot_build
+mov r1, #0
+mov r2, #0
+bl loot_allocate
+movs r7, r0
+beq loot_cmd_ack
+cmp r6, #6
+beq loot_cmd_success
+b loot_cmd_spawn
+loot_cmd_spawn_existing:
+ldr r0, [r7, #0x4c]
+cmp r0, #0
+bne loot_cmd_success
+mov r0, r7
+bl loot_actor
+cmp r0, #0
+bne loot_cmd_success
+@ Rebuild from the row, retaining the same native grant ledger.
+ldr r0, [r7, #0x14]
+str r0, [r4, #0x100]
+add r0, r7, #0x18
+add r1, r4, #0x104
+ldm r0, {r2,r3,r8-r11}
+stm r1, {r2,r3,r8-r11}
+ldr r0, [r7, #0x30]
+str r0, [r4, #0x11c]
+ldr r0, [r7, #0x34]
+str r0, [r4, #0x120]
+ldr r0, [r7, #0x38]
+str r0, [r4, #0x124]
+bl loot_build
+loot_cmd_spawn:
+ldr r0, =0x709df8
+ldr r0, [r0]
+ldrb r1, [r0, #0x18]
+ldr r2, [r7, #4]
+cmp r1, r2
+bne loot_cmd_ack
+ldr r1, [r0, #0x1c]
+ldr r2, [r7, #8]
+cmp r1, r2
+bne loot_cmd_ack
+str r7, [r4, #0x2c]
+ldr r0, =0x706e20
+ldr r0, [r0]
+add r1, r4, #0xa000
+mov r2, #1
+ldr r12, =0x4c4acc
+blx r12
+mov r1, #0
+str r1, [r4, #0x2c]
+cmp r0, #0
+beq loot_cmd_ack
+b loot_cmd_success
+loot_cmd_grant:
+ldr r0, [r7, #0x4c]
+cmp r0, #0
+bne loot_cmd_remove
+mov r0, #1
+str r0, [r4, #0xac]
+ldr r8, [r7, #0x14]
+cmp r8, #45
+moveq r1, #4
+beq loot_grant_health
+cmp r8, #66
+moveq r1, #20
+beq loot_grant_health
+cmp r8, #64
+moveq r0, #0x5a
+beq loot_grant_item
+cmp r8, #129
+moveq r0, #0x3b
+beq loot_grant_item
+cmp r8, #131
+moveq r0, #0x3a
+beq loot_grant_item
+cmp r8, #130
+moveq r0, #0x3c
+beq loot_grant_item
+cmp r8, #63
+cmpne r8, #106
+cmpne r8, #107
+bne loot_grant_refuse
+ldrsh r0, [r7, #0x36]
+cmp r0, #5
+bhi loot_grant_refuse
+adr r1, loot_rupee_items
+ldrb r0, [r1, r0]
+loot_grant_item:
+ldr r1, =0x70fb60
+ldr r1, [r1]
+ldr r1, [r1, #0x10]
+ldr r12, =0x344810
+blx r12
+b loot_grant_done
+loot_grant_health:
+ldr r0, =0x70fb60
+ldr r0, [r0]
+mov r2, #1
+ldr r12, =0x1dd484
+blx r12
+b loot_grant_done
+loot_grant_refuse:
+mov r0, #0
+loot_grant_done:
+mov r1, #0
+str r1, [r4, #0xac]
+cmp r0, #0
+beq loot_cmd_ack
+mov r0, #2
+str r0, [r7, #0x4c]
+loot_cmd_remove:
+mov r0, r7
+bl loot_actor
+cmp r0, #0
+movne r1, #1
+strbne r1, [r0, #0x2d7]
+loot_cmd_success:
+mov r0, #1
+b loot_cmd_return
+loot_cmd_ack:
+mov r0, #0
+loot_cmd_return:
+str r0, [r4, #0x40]
+cmp r7, #0
+ldrne r0, [r7]
+str r0, [r4, #0x80]
+mov r0, #3
+str r0, [r4, #0xbc]
+str r5, [r4, #0x34]
+loot_tick_end:
+pop {r0,r1}
+vmsr fpscr, r0
+vpop {d0-d7}
+pop {r4-r11,r12,pc}
+.align 2
+loot_rupee_items: .byte 6,7,5,0x5b,0x2e,0x2d,0,0
+.ltorg

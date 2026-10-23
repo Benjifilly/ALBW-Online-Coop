@@ -1,0 +1,117 @@
+@ Optional reconciliation at the final HP subtraction. Custom ABI:
+@ r0=actor,r1=HitInfo,r2=computed damage,r3=world; returns r2=damage.
+@ Other registers/VFP/flags are preserved by this callback and its entry.
+@ Never writes HP or death flags. No second call to EnemyBase::calc.
+.syntax unified
+.arm
+push {r0-r12,lr}
+mov r4, r3
+mov r5, r0
+mov r6, r1
+mov r7, r2
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne health_return
+ldr r8, [r4, #0xa4]
+add r0, r4, #0x31000
+cmp r8, r0
+bne health_return
+ldr r0, [r8]
+ldr r1, =0x31504d49
+cmp r0, r1
+bne health_return
+ldr r0, [r8, #4]
+cmp r0, #1
+bne health_return
+ldr r0, [r8, #8]
+cmp r0, #3
+bne health_return
+ldr r0, [r8, #0x100]
+cmp r0, #1
+bne health_return
+ldr r0, [r8, #0x108]
+cmp r0, #0
+bne health_return
+ldr r0, [r8, #0x10]
+cmp r0, #0
+beq health_return
+ldr r0, [r8, #0x40]
+cmp r0, r5
+bne health_return
+ldr r0, [r8, #0x58]
+cmp r0, r6
+bne health_return
+ldr r0, [r5, #0x43c]
+cmp r0, r6
+bne health_return
+ldr r9, [r8, #0x44]
+ldr r0, [r5, #0x2cc]
+cmp r0, r9
+bne health_return
+ldr r0, [r4, #0x94]
+cmp r0, r9
+bne health_return
+ldr r0, [r4, #0x2c]
+mov r1, r9, lsr #22
+add r0, r0, r1, lsl #2
+ldr r1, [r4, #0x30]
+cmp r0, r1
+bhs health_return
+ldr r0, [r0]
+cmp r0, r5
+bne health_return
+ldrb r0, [r5, #0x2d7]
+cmp r0, #0
+bne health_return
+ldr r0, [r5, #0x2d0]
+ldr r1, [r8, #0x50]
+cmp r0, r1
+bne health_return
+ldrsh r0, [r5, #0x58]
+ldr r1, [r8, #0x4c]
+cmp r0, r1
+bne health_return
+ldr r0, [r8, #0xf8]
+cmp r0, #1
+bne health_return
+ldr r0, [r6]
+cmp r0, #0x20
+bne health_return
+ldr r0, [r6, #4]
+ldr r1, [r8, #0x38]
+cmp r0, r1
+bne health_return
+ldrb r0, [r6, #0x20]
+cmp r0, #9
+bne health_return
+ldrb r0, [r6, #0x21]
+cmp r0, #5
+bne health_return
+add r0, r5, #0x500
+ldrsh r1, [r0, #8]
+ldr r2, [r8, #0x5c]
+cmp r1, r2
+bne health_return
+cmp r1, #0
+ble health_return
+ldrsh r2, [r0, #10]
+ldr r3, [r8, #0x60]
+cmp r2, r3
+bne health_return
+ldr r2, [r8, #0x104]
+cmp r2, r1
+bhs health_return
+sub r3, r1, r2
+cmp r7, #0
+beq health_return
+str r7, [r8, #0x110]
+str r3, [r8, #0x114]
+str r2, [r8, #0x10c]
+strh r3, [r6, #0x30]
+str r3, [sp, #8]
+ldr r0, [r8, #0x10]
+str r0, [r8, #0x108]
+health_return:
+pop {r0-r12,pc}
+.ltorg

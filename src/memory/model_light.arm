@@ -1,0 +1,118 @@
+@ Called once per frame by world_dispatch (world+0xB8 == this code), r0 =
+@ world control. The private models (the companion's body, his sword,
+@ shield and painting, carried objects, held tools) are outside the game's
+@ lighting refresh: a scene light change (130134, from 16B5C4/16B6F4) gives
+@ each model its light-set offset only if it is registered at that moment.
+@ After Link's death, a companion that was hidden (another room) when that
+@ light was cleared kept offset 0x18 and was drawn unlit, black (23/10).
+@ Every shown one takes the current offset from the game's own per-model
+@ refresh 4CF4F4, which leaves an unchanged offset alone.
+.syntax unified
+.arm
+push {r4-r8,lr}
+mov r4, r0
+ldr r5, =0x7afb00
+ldr r0, [r5]
+ldr r1, =0x434f4f50
+cmp r0, r1
+bne light_done
+@ The companion's body and silhouette, while presented (+14 == 1).
+ldr r0, [r5, #0x14]
+cmp r0, #1
+bne light_gear
+ldr r6, [r5, #0x10]
+mov r0, r6
+bl light_pointer
+cmp r0, #0
+beq light_gear
+ldr r0, [r6]
+ldr r1, =0x6da424
+cmp r0, r1
+bne light_gear
+ldr r0, [r6, #0x10]
+bl light_model
+ldr r0, [r6, #0x14]
+bl light_model
+light_gear:
+@ Painting, sword and shield descriptors (mailbox +158, +15C, +160).
+ldr r0, [r5, #0x158]
+bl light_descriptor
+ldr r0, [r5, #0x15c]
+bl light_descriptor
+ldr r0, [r5, #0x160]
+bl light_descriptor
+@ Carried objects: four descriptors at world+62800, once installed.
+ldr r0, [r4, #0xb0]
+add r1, r4, #0x62000
+cmp r0, r1
+bne light_items
+add r6, r1, #0x800
+mov r7, #4
+light_carried:
+mov r0, r6
+bl light_descriptor
+add r6, r6, #0x100
+subs r7, r7, #1
+bne light_carried
+light_items:
+@ Held tools and projectiles: 24 descriptor pointers at world+66800.
+ldr r0, [r4, #0xb4]
+add r1, r4, #0x66000
+cmp r0, r1
+bne light_done
+add r6, r1, #0x800
+mov r7, #24
+light_item:
+ldr r0, [r6], #4
+bl light_descriptor
+subs r7, r7, #1
+bne light_item
+light_done:
+pop {r4-r8,pc}
+
+@ r0 = a lease descriptor ('WALL', model +C) or anything else.
+light_descriptor:
+push {r4,lr}
+mov r4, r0
+bl light_pointer
+cmp r0, #0
+popeq {r4,pc}
+ldr r0, [r4]
+ldr r1, =0x57414c4c
+cmp r0, r1
+popne {r4,pc}
+ldr r0, [r4, #0xc]
+pop {r4,lr}
+@ r0 = a G3D, refreshed only while registered visible (+30 == 1).
+light_model:
+push {r4,lr}
+mov r4, r0
+bl light_pointer
+cmp r0, #0
+popeq {r4,pc}
+ldr r0, [r4]
+ldr r1, =0x6ebef0
+cmp r0, r1
+popne {r4,pc}
+ldrsb r0, [r4, #0x30]
+cmp r0, #1
+popne {r4,pc}
+mov r0, r4
+pop {r4,lr}
+ldr r12, =0x4cf4f4
+bx r12
+
+@ r0 = 1 for a word-aligned heap pointer, else 0. Uses r0 only.
+light_pointer:
+cmp r0, #0x08000000
+blo light_no
+cmp r0, #0x1f000000
+bhs light_no
+tst r0, #3
+bne light_no
+mov r0, #1
+bx lr
+light_no:
+mov r0, #0
+bx lr
+.ltorg

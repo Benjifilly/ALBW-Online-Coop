@@ -1,0 +1,26 @@
+@ Observe native HP subtraction. An optional owned reconciliation adjusts
+@ only its own replay's damage; the original native subtraction still runs.
+.syntax unified
+.arm
+push {r0-r12,lr}
+mrs r5, cpsr
+mov r2, r0
+mov r0, r4
+ldr r1, [r4, #0x43c]
+ldr r3, =0x7afffc
+ldr r3, [r3]
+cmp r3, #0
+beq enemy_entry_finish
+ldr r12, [r3, #0xa0]
+cmp r12, #0
+blxne r12
+str r2, [sp]
+cmp r3, #0
+addne r12, r3, #0x1a00
+blxne r12
+enemy_entry_finish:
+msr cpsr_f, r5
+pop {r0-r12,lr}
+ldrh r1, [r5, #8]
+b 0x4f73fc
+.ltorg

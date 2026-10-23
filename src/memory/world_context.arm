@@ -1,0 +1,72 @@
+@ r4=control. Pure local reads, returns r0 bool. Both command and capture
+@ check the same owning world, actor list, hero/body, gameplay mode and room.
+.syntax unified
+.arm
+mov r0, #0
+ldr r1, [r4]
+ldr r2, =0x574f5231
+cmp r1, r2
+bxne lr
+ldr r1, [r4, #0x90]
+cmp r1, #4
+bxne lr
+ldr r1, [r4, #4]
+cmp r1, #1
+bxne lr
+ldr r1, [r4, #0x3c]
+cmp r1, #0
+bxeq lr
+ldr r1, =0x706e20
+ldr r1, [r1]
+ldr r2, [r4, #0x24]
+cmp r1, r2
+bxne lr
+add r1, r1, #0x3d000
+add r1, r1, #0xbc0
+ldr r2, [r1]
+ldr r3, [r4, #0x2c]
+cmp r2, r3
+bxne lr
+@ The table end moves whenever an actor takes or frees the last slot (a lit
+@ torch's ground glow, 23/10): it is not an identity. Every user bounds its
+@ slot by +30, refreshed here to the live end.
+ldr r2, [r1, #8]
+str r2, [r4, #0x30]
+ldr r1, =0x709df8
+ldr r1, [r1]
+ldr r2, [r4, #0x28]
+cmp r1, r2
+bxne lr
+ldrb r2, [r1, #0x18]
+ldr r3, [r4, #0x34]
+cmp r2, r3
+bxne lr
+ldr r2, [r1, #0x1c]
+ldr r3, [r4, #0x38]
+cmp r2, r3
+bxne lr
+ldr r1, =0x7afb00
+ldr r2, [r1, #0x14]
+cmp r2, #4
+bxeq lr
+ldr r2, [r1, #0x18]
+ldr r3, [r4, #0x18]
+cmp r2, r3
+bxne lr
+ldr r1, [r2, #0x2cc]
+ldr r3, [r4, #0x1c]
+cmp r1, r3
+bxne lr
+ldr r1, [r2, #0x600]
+ldr r3, [r4, #0x20]
+cmp r1, r3
+bxne lr
+ldr r1, =0x712468
+ldr r1, [r1]
+cmp r1, #0
+bxeq lr
+ldrb r1, [r1, #0x25]
+cmp r1, #0
+moveq r0, #1
+bx lr
+.ltorg

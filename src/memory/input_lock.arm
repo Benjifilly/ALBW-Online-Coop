@@ -1,0 +1,28 @@
+@ Replaces "cmp r0, #0" at 19AE0C, in the input manager's per-wrapper update
+@ 19ADE8 (r4 = wrapper index), right after it asked 520B20 whether a fade
+@ freezes input. While this Link spectates (player_life control +4), the
+@ gameplay wrappers 0 and 2 are frozen exactly as the game does during
+@ events; wrapper 1 still advances message boxes. The sead controller itself
+@ is copied into these wrappers before the Player calc, so clearing it there
+@ was too late (23/10: the spectator could still talk and swing).
+@ Only r0 and the flags change, as the displaced cmp would.
+.syntax unified
+.arm
+lock_base:
+push {r1-r3}
+adr r1, lock_base
+sub r1, r1, #LIFE_CONTROL_DELTA
+ldr r2, [r1]
+ldr r3, =0x4546494c
+cmp r2, r3
+bne lock_done
+ldr r2, [r1, #4]
+cmp r2, #0
+beq lock_done
+cmp r4, #1
+movne r0, #1
+lock_done:
+pop {r1-r3}
+cmp r0, #0
+ldr pc, =0x19ae10
+.ltorg

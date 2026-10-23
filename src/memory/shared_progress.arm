@@ -1,0 +1,475 @@
+@ Shared progress: game flags and item grants. All entries run on the game thread.
+@ Control (own reservation, pointer 7AFF74): +0 magic, +4 enabled, +8 lease,
+@ +C frame, +10 captured count, +14 read acknowledgement, +18 dropped,
+@ +1C replay marker, +20 requested replays, +24 completed replays,
+@ +28 last wallet, +2C its Player.
+@ Capture ring +4000: 256 x 32 bytes (serial, type 1 flag / 2 grant / 3 spent, then
+@ kind, index, value | item, tag, loot; course block offset; course|stage<<8; caller).
+@ Replay ring +8000: 64 x 32 bytes (serial, op, a, b, c, d, result).
+.syntax unified
+.arm
+b progress_tick
+b progress_flag_observer
+b progress_grant_observer
+b progress_event_observer
+
+@ r0 = control or 0 (missing, other magic, disabled or expired lease).
+progress_control:
+ldr r0, =0x7aff74
+ldr r0, [r0]
+cmp r0, #0
+bxeq lr
+ldr r1, [r0]
+ldr r2, =0x50524731
+cmp r1, r2
+movne r0, #0
+bxne lr
+ldr r1, [r0, #4]
+cmp r1, #1
+movne r0, #0
+bxne lr
+ldr r1, [r0, #8]
+cmp r1, #0
+movle r0, #0
+bx lr
+
+@ r9 = control -> r11 = free record with its course/room words (r10 = count),
+@ or r11 = 0 after counting a dropped observation.
+progress_slot:
+ldr r10, [r9, #0x10]
+ldr r1, [r9, #0x14]
+sub r1, r10, r1
+cmp r1, #256
+bhs progress_slot_full
+and r1, r10, #255
+add r11, r9, #0x4000
+add r11, r11, r1, lsl #5
+ldr r0, =0x70c8e0
+ldr r0, [r0]
+cmp r0, #0
+ldrne r1, [r0, #0x40]
+subne r1, r1, r0
+moveq r1, #0
+str r1, [r11, #20]
+ldr r0, =0x709df8
+ldr r0, [r0]
+cmp r0, #0
+ldrbne r1, [r0, #0x18]
+ldrne r2, [r0, #0x1c]
+orrne r1, r1, r2, lsl #8
+mvneq r1, #0
+str r1, [r11, #24]
+bx lr
+progress_slot_full:
+ldr r1, [r9, #0x18]
+add r1, r1, #1
+str r1, [r9, #0x18]
+mov r11, #0
+bx lr
+
+@ r9 = control, r10 = count, r11 = filled record: publish it.
+progress_commit:
+add r10, r10, #1
+str r10, [r11]
+str r10, [r9, #0x10]
+bx lr
+
+@ setFlag 4AD9C8 reaches 4ADAF4 only for a changed value: r8 kind, r7
+@ index, r6 value, caller lr saved at sp+0x14. Replaces "ldr r0,[pc,#0x1c]".
+progress_flag_observer:
+push {r0-r12,lr}
+mrs r0, cpsr
+push {r0}
+bl progress_control
+movs r9, r0
+beq progress_flag_return
+ldr r0, [r9, #0x1c]
+cmp r0, #0
+bne progress_flag_return
+@ Kind 0 index 1 is rewritten every frame (2613EC): never an observation.
+cmp r8, #0
+cmpeq r7, #1
+beq progress_flag_return
+cmp r8, #4
+bhi progress_flag_return
+bl progress_slot
+cmp r11, #0
+beq progress_flag_return
+mov r0, #1
+str r0, [r11, #4]
+str r8, [r11, #8]
+str r7, [r11, #12]
+str r6, [r11, #16]
+ldr r0, [sp, #0x50]
+str r0, [r11, #28]
+bl progress_commit
+progress_flag_return:
+pop {r0}
+msr cpsr_f, r0
+pop {r0-r12,lr}
+ldr r0, =0x706e20
+ldr pc, =0x4adaf8
+
+@ The only item grant call (28EE18 "bl 344810"): r0 item, r1 player, r4 the
+@ item-get sequence. A grant already owned by the shared loot (its item-get
+@ observer matched a loot actor for this item) is marked, never hidden.
+progress_grant_observer:
+push {r0-r12,lr}
+bl progress_control
+movs r9, r0
+beq progress_grant_call
+ldr r0, [r9, #0x1c]
+cmp r0, #0
+bne progress_grant_call
+ldr r5, [sp]
+mov r6, #0
+ldr r0, =0x7aff70
+ldr r0, [r0]
+cmp r0, #0
+beq progress_grant_record
+ldr r1, [r0]
+ldr r2, =0x4c4f5431
+cmp r1, r2
+bne progress_grant_record
+ldr r1, [r0, #0x90]
+cmp r1, #0
+beq progress_grant_record
+ldr r1, [r0, #0x94]
+cmp r1, r5
+moveq r6, #1
+progress_grant_record:
+bl progress_slot
+cmp r11, #0
+beq progress_grant_call
+mov r0, #2
+str r0, [r11, #4]
+str r5, [r11, #8]
+ldrsh r0, [r4, #0x80]
+str r0, [r11, #12]
+str r6, [r11, #16]
+mov r0, #0
+str r0, [r11, #28]
+bl progress_commit
+progress_grant_call:
+pop {r0-r12,lr}
+ldr lr, =0x28ee1c
+ldr pc, =0x344810
+
+@ Event flags written directly (4CDF18 entry, 30 call sites besides setFlag):
+@ r0 events [70B728], r1 flag number, r2 value. Recorded as a kind 4 flag
+@ only when its bit (table 69BC52) really changes; setFlag's own kind 4 call
+@ (return 4ADAEC) is already observed at 4ADAF4. Replaces "push {r4-r6,lr}".
+progress_event_observer:
+push {r0-r12,lr}
+bl progress_control
+movs r9, r0
+beq progress_event_return
+ldr r0, [r9, #0x1c]
+cmp r0, #0
+bne progress_event_return
+ldr r0, [sp, #0x34]
+ldr r1, =0x4adaec
+cmp r0, r1
+beq progress_event_return
+ldr r0, =0x70b728
+ldr r0, [r0]
+ldr r1, [sp]
+cmp r0, r1
+bne progress_event_return
+ldr r1, [sp, #4]
+cmp r1, #0x10000
+bhs progress_event_return
+ldr r3, =0x69bc52
+add r3, r3, r1, lsl #1
+ldrh r3, [r3]
+cmp r3, #0
+beq progress_event_return
+add r0, r0, #0x48
+lsr r12, r3, #5
+ldr r12, [r0, r12, lsl #2]
+and r3, r3, #31
+lsr r12, r12, r3
+and r12, r12, #1
+ldr r2, [sp, #8]
+cmp r2, #0
+movne r2, #1
+cmp r12, r2
+beq progress_event_return
+bl progress_slot
+cmp r11, #0
+beq progress_event_return
+mov r0, #1
+str r0, [r11, #4]
+mov r0, #4
+str r0, [r11, #8]
+ldr r0, [sp, #4]
+str r0, [r11, #12]
+ldr r0, [sp, #8]
+cmp r0, #0
+movne r0, #1
+str r0, [r11, #16]
+ldr r0, [sp, #0x34]
+str r0, [r11, #28]
+bl progress_commit
+progress_event_return:
+pop {r0-r12,lr}
+push {r4,r5,r6,lr}
+ldr pc, =0x4cdf1c
+
+@ Frame callback, r0 = this reservation. At most four replays per frame,
+@ each answered in its record: 1 applied, 2 refused, 3 not now (requeue).
+progress_tick:
+push {r4-r11,lr}
+mov r4, r0
+bl progress_control
+cmp r0, r4
+bne progress_tick_end
+ldr r0, [r4, #8]
+sub r0, r0, #1
+str r0, [r4, #8]
+ldr r0, [r4, #12]
+add r0, r0, #1
+str r0, [r4, #12]
+@ Same playable-frame gate as the shared loot.
+ldr r0, =0x712468
+ldr r0, [r0]
+cmp r0, #0
+beq progress_tick_end
+ldrb r0, [r0, #0x25]
+cmp r0, #0
+bne progress_tick_end
+@ Rupees spent here since the last frame, before any replay changes them.
+mov r0, #1
+bl progress_wallet
+mov r8, #4
+progress_tick_next:
+ldr r5, [r4, #0x24]
+ldr r0, [r4, #0x20]
+cmp r5, r0
+beq progress_tick_done
+subs r8, r8, #1
+blt progress_tick_done
+and r0, r5, #63
+add r6, r4, #0x8000
+add r6, r6, r0, lsl #5
+ldr r0, [r6]
+add r1, r5, #1
+cmp r0, r1
+bne progress_tick_done
+mov r7, #2
+ldr r0, [r6, #4]
+cmp r0, #1
+beq progress_replay_flag
+cmp r0, #2
+beq progress_replay_item
+cmp r0, #3
+beq progress_replay_spend
+cmp r0, #4
+beq progress_replay_wallet
+progress_tick_result:
+str r7, [r6, #24]
+add r5, r5, #1
+str r5, [r4, #0x24]
+b progress_tick_next
+progress_tick_done:
+@ The replays' own wallet changes are never observed as spending.
+mov r0, #0
+bl progress_wallet
+progress_tick_end:
+pop {r4-r11,pc}
+
+@ r4 = control, r0 = 1 to observe. The local wallet (Player+4FC): a drop
+@ since the last frame is rupees spent in this game (a shop, Ravio...),
+@ recorded as type 3 with the amount. Gains already reach every game (loot
+@ rights, item grants). Then the wallet and its Player are remembered
+@ (+28, +2C); another Player is never compared.
+progress_wallet:
+push {r4-r11,lr}
+mov r9, r4
+mov r5, r0
+bl progress_player_wallet
+cmp r0, #0
+streq r0, [r9, #0x2c]
+popeq {r4-r11,pc}
+ldrh r7, [r0, #0xf0]
+sub r6, r0, #0x400
+sub r6, r6, #0xc
+ldr r0, [r9, #0x2c]
+cmp r0, r6
+cmpeq r5, #1
+bne progress_wallet_store
+ldr r8, [r9, #0x28]
+subs r8, r8, r7
+ble progress_wallet_store
+bl progress_slot
+cmp r11, #0
+beq progress_wallet_store
+mov r0, #3
+str r0, [r11, #4]
+str r8, [r11, #8]
+mov r0, #0
+str r0, [r11, #12]
+str r0, [r11, #16]
+str r0, [r11, #28]
+bl progress_commit
+progress_wallet_store:
+str r7, [r9, #0x28]
+str r6, [r9, #0x2c]
+pop {r4-r11,pc}
+
+@ r0 = the local Player's wallet block (Player+40C, rupees at +F0), or 0.
+progress_player_wallet:
+ldr r0, =0x70fb60
+ldr r0, [r0]
+cmp r0, #0
+bxeq lr
+ldr r0, [r0, #0x10]
+cmp r0, #0x14000000
+movlo r0, #0
+bxlo lr
+cmp r0, #0x1c000000
+movhs r0, #0
+bxhs lr
+add r0, r0, #0x400
+add r0, r0, #0xc
+bx lr
+
+@ r6 record +8: rupees spent in another game (op 3), or the host's wallet
+@ every game aligns to once per session (op 4). Through the game's own
+@ wallet routine 255AEC(wallet, signed delta), which clamps at 0 and the cap.
+progress_replay_spend:
+bl progress_player_wallet
+cmp r0, #0
+moveq r7, #3
+beq progress_tick_result
+ldr r1, [r6, #8]
+rsb r1, r1, #0
+b progress_replay_wallet_apply
+progress_replay_wallet:
+bl progress_player_wallet
+cmp r0, #0
+moveq r7, #3
+beq progress_tick_result
+ldrh r1, [r0, #0xf0]
+ldr r2, [r6, #8]
+subs r1, r2, r1
+moveq r7, #1
+beq progress_tick_result
+progress_replay_wallet_apply:
+ldr r12, =0x255aec
+blx r12
+mov r7, #1
+b progress_tick_result
+
+@ r6 record: +8 kind 1..4, +C index, +10 value, +14 course. Kinds 1..3 live in
+@ the current course block: refused (3) while another course is loaded.
+progress_replay_flag:
+ldr r9, =0x70c8e0
+ldr r9, [r9]
+cmp r9, #0
+moveq r7, #3
+beq progress_tick_result
+ldr r0, [r6, #8]
+ldr r1, [r6, #12]
+ldr r2, [r6, #16]
+cmp r2, #1
+bhi progress_tick_result
+cmp r1, #0
+beq progress_tick_result
+cmp r1, #0x10000
+bhs progress_tick_result
+cmp r0, #4
+beq progress_replay_flag_apply
+cmp r0, #0
+beq progress_tick_result
+cmp r0, #3
+bhi progress_tick_result
+mov r3, #640
+cmp r0, #2
+moveq r3, #384
+cmp r0, #1
+moveq r3, #512
+cmp r1, r3
+bhs progress_tick_result
+ldr r0, [r6, #20]
+bl progress_same_course
+movne r7, #3
+bne progress_tick_result
+ldr r0, [r6, #8]
+ldr r1, [r6, #12]
+ldr r2, [r6, #16]
+progress_replay_flag_apply:
+mov r3, r2
+mov r2, r0
+mov r0, r9
+mov r10, #1
+str r10, [r4, #0x1c]
+ldr r12, =0x4ad9c8
+blx r12
+mov r0, #0
+str r0, [r4, #0x1c]
+mov r7, #1
+b progress_tick_result
+
+@ r6 record: +8 item, +C course. Never a small key (1); a boss key (2) or a
+@ compass (3) only in its own course; nothing during a global event.
+progress_replay_item:
+ldr r0, [r6, #8]
+cmp r0, #2
+blo progress_tick_result
+cmp r0, #0x61
+bhs progress_tick_result
+mov r7, #3
+ldr r1, =0x70b728
+ldr r1, [r1]
+cmp r1, #0
+ldrne r1, [r1, #0x44]
+cmpne r1, #0
+bne progress_tick_result
+cmp r0, #3
+bhi progress_replay_item_grant
+ldr r9, =0x70c8e0
+ldr r9, [r9]
+cmp r9, #0
+beq progress_tick_result
+ldr r0, [r6, #12]
+bl progress_same_course
+bne progress_tick_result
+progress_replay_item_grant:
+ldr r1, =0x70fb60
+ldr r1, [r1]
+cmp r1, #0
+beq progress_tick_result
+ldr r1, [r1, #0x10]
+cmp r1, #0x14000000
+blo progress_tick_result
+cmp r1, #0x1c000000
+bhs progress_tick_result
+ldr r0, [r6, #8]
+mov r2, #1
+str r2, [r4, #0x1c]
+ldr r12, =0x344810
+blx r12
+mov r2, #0
+str r2, [r4, #0x1c]
+cmp r0, #0
+moveq r7, #2
+movne r7, #1
+b progress_tick_result
+
+@ r0 = course, r9 = flag manager -> Z set when it is the loaded course
+@ block (+44 + course * 16C). Clobbers r0-r3.
+progress_same_course:
+cmp r0, #64
+bhs progress_same_course_no
+mov r1, #0x16c
+mul r2, r0, r1
+add r2, r2, #0x44
+add r2, r2, r9
+ldr r3, [r9, #0x40]
+cmp r3, r2
+bx lr
+progress_same_course_no:
+movs r0, #1
+bx lr
+.ltorg

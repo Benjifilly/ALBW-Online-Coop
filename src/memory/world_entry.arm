@@ -1,0 +1,19 @@
+@ Azahar-only extension in verified, otherwise unused mapped data padding.
+@ Dispatch the existing queue first; r8 remains the renderer mailbox. Then
+@ every published service (loot, room restore, progress, world) at +0x1000.
+.syntax unified
+.arm
+push {r4,lr}
+bl 0x692c00
+adr r4, world_services
+world_next:
+ldr r0, [r4], #4
+cmp r0, #0
+popeq {r4,pc}
+ldr r0, [r0]
+cmp r0, #0
+addne r12, r0, #0x1000
+blxne r12
+b world_next
+world_services:
+.word 0x7aff70, 0x7aff78, 0x7aff74, 0x7afffc, 0

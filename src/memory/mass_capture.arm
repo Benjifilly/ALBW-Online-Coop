@@ -1,0 +1,86 @@
+@ Observe a Mass instance (pot, rock) leaving its batch, at the native store
+@ of its new state ("strb r1,[r0]", r0=record). Sites and values live in
+@ src/memory/capture_hooks.py (MASS_SITES); the builder substitutes VTABLE,
+@ VALUE, IDLE_A/IDLE_B (states it may leave), BATCH/INDEX (saved-frame
+@ offsets) and RETURN.
+@ Writes only the world event ring, never during a replay; then performs the
+@ displaced store. Ring event: handle, index, effect=VALUE, room, owner, old.
+.syntax unified
+.arm
+push {r0-r12,lr}
+mrs r0, cpsr
+push {r0}
+ldr r0, =0x7afffc
+ldr r4, [r0]
+cmp r4, #0x14000000
+blo pot_return
+cmp r4, #0x1c000000
+bhs pot_return
+tst r4, #3
+bne pot_return
+ldr r0, [r4, #0x64]
+cmp r0, #0
+bne pot_return
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne pot_return
+@ Saved registers: r0 +0x04, r1 +0x08, r4 +0x14...; native sp is 0x3C above.
+ldr r0, [sp, #0x08]
+cmp r0, #VALUE
+bne pot_return
+ldr r5, [sp, #BATCH]
+ldr r6, [sp, #INDEX]
+@ Shared identity (world_mass), then the record must be native r0.
+mov r0, r5
+mov r1, r6
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq pot_return
+ldr r2, [r1, #4]
+ldr r3, =VTABLE
+cmp r2, r3
+bne pot_return
+ldr r2, [sp, #0x04]
+cmp r2, r0
+bne pot_return
+@ Only an intact or wobbling instance leaves its batch here.
+ldrb r8, [r0]
+cmp r8, #IDLE_A
+cmpne r8, #IDLE_B
+bne pot_return
+ldr r0, [r4, #0x58]
+ldr r1, [r4, #0x5c]
+sub r1, r0, r1
+cmp r1, #64
+bhs pot_overflow
+and r1, r0, #63
+add r3, r4, #0x100
+add r3, r3, r1, lsl #5
+ldr r1, [r5, #0x2cc]
+str r1, [r3, #4]
+str r6, [r3, #8]
+mov r1, #VALUE
+str r1, [r3, #12]
+ldr r1, [r4, #0x34]
+str r1, [r3, #0x10]
+ldr r1, [r4, #0x38]
+str r1, [r3, #0x14]
+ldr r1, [r4, #0x24]
+str r1, [r3, #0x18]
+str r8, [r3, #0x1c]
+add r0, r0, #1
+str r0, [r3]
+str r0, [r4, #0x58]
+b pot_return
+pot_overflow:
+mov r0, #1
+str r0, [r4, #0x60]
+pot_return:
+pop {r0}
+msr cpsr_f, r0
+pop {r0-r12,lr}
+strb r1, [r0]
+ldr pc, =RETURN
+.ltorg

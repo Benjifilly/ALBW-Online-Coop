@@ -1,0 +1,62 @@
+@ Entry-only observation; r0=grass batch,r1=index,r2=kind,r3=owned control.
+@ No mutation of gameplay, no native callbacks, no floating-point operations.
+.syntax unified
+.arm
+push {r4-r8,lr}
+mov r4, r3
+mov r5, r0
+mov r6, r1
+mov r7, r2
+ldr r0, [r4, #0x64]
+cmp r0, #0
+bne capture_return
+cmp r7, #4
+bhi capture_return
+bl 0x400
+cmp r0, #0
+beq capture_return
+@ Shared identity (world_mass); 237288 only serves the grass/lawn layout.
+mov r0, r5
+mov r1, r6
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq capture_return
+ldr r1, [r1, #4]
+ldr r2, =0x6ee60c
+cmp r1, r2
+ldrne r2, =0x6ec2d8
+cmpne r1, r2
+bne capture_return
+ldr r0, [r4, #0x58]
+ldr r1, [r4, #0x5c]
+sub r1, r0, r1
+cmp r1, #64
+bhs capture_overflow
+and r1, r0, #63
+add r8, r4, #0x100
+add r8, r8, r1, lsl #5
+ldr r1, [r5, #0x2cc]
+str r1, [r8, #4]
+str r6, [r8, #8]
+str r7, [r8, #12]
+ldr r1, [r4, #0x34]
+str r1, [r8, #0x10]
+ldr r1, [r4, #0x38]
+str r1, [r8, #0x14]
+ldr r1, [r4, #0x24]
+str r1, [r8, #0x18]
+ldr r1, [r5, #0x634]
+add r2, r6, r6, lsl #6
+ldrb r1, [r1, r2, lsl #2]
+str r1, [r8, #0x1c]
+add r0, r0, #1
+str r0, [r8]
+str r0, [r4, #0x58]
+b capture_return
+capture_overflow:
+mov r0, #1
+str r0, [r4, #0x60]
+capture_return:
+pop {r4-r8,pc}
+.ltorg

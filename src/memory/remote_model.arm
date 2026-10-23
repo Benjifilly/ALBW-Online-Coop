@@ -1,0 +1,320 @@
+@ Experimental EUR render-only companion. No actor / AI / inventory functions.
+@ Installed at the one return of Player::updateModel. SP is 4 mod 8 here.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r0-r12}
+vpush {d0-d15}
+sub sp, sp, #24
+mov r0, #0
+str r0, [sp, #12]
+vmrs r0, fpscr
+str r0, [sp, #16]
+mrs r0, cpsr
+str r0, [sp, #20]
+ldr r8, =0x007AFB00
+ldr r0, [r8]
+ldr r1, =0x434F4F50
+cmp r0, r1
+bne finish
+mov r0, #1
+str r0, [r8, #0x54]
+ldr r9, [r8, #0x10]
+ldr r0, [r8, #0x18]
+cmp r0, r4
+bne wrong_owner
+ldr r0, [r4, #0x2cc]
+ldr r1, [r8, #0x6c]
+cmp r0, r1
+bne wrong_owner
+ldr r6, [r4, #0x600]
+ldr r1, [r8, #0x70]
+cmp r6, r1
+bne wrong_owner
+@ Model constructors use the current thread's heap, which is normally unset
+@ during gameplay. Borrow the local model's verified owning heap, then restore.
+ldr r1, [r6, #4]
+ldr r0, =0x00715210
+ldr r0, [r0]
+str r0, [sp, #8]
+bl 0x0010983C
+str r0, [sp, #4]
+mov r0, #1
+str r0, [sp, #12]
+@ A separate lease-guarded entry supplies the local colour before material
+@ calculation. Here only the private texture wrapper and lease are maintained.
+ldr r1, [r8, #0x58]
+ldr r0, [r8, #0x5c]
+cmp r0, #0
+moveq r1, #0xff
+beq local_colour
+sub r0, r0, #1
+str r0, [r8, #0x5c]
+local_colour:
+mov r0, r6
+bl palette_for_model
+check_scene:
+ldr r0, =0x00709DF8
+ldr r0, [r0]
+ldrb r1, [r0, #0x18]
+ldr r2, [r8, #0x1c]
+cmp r1, r2
+bne hide
+ldr r1, [r0, #0x1c]
+ldr r2, [r8, #0x20]
+cmp r1, r2
+@ The room label changes before the outdoor camera finishes scrolling. The
+@ current Player/body identity and course were already verified above. Keep
+@ the old room's existing visual only while the native ZeldaScroll is active.
+ldrne r0, [r4, #0x614]
+ldrhne r0, [r0, #0x42]
+cmpne r0, #0x5f
+bne hide
+ldr r0, [r8, #8]
+cmp r0, #0
+beq hide
+ldr r0, [r8, #0x4c]
+cmp r0, #0
+beq hide
+sub r0, r0, #1
+str r0, [r8, #0x4c]
+@ The representation comes from the sender, not from successful construction
+@ of a projected surface. Missing geometry must never reveal a solid Link.
+ldr r10, [r8, #0x168]
+ldr r0, [r10]
+ldr r1, =0x31444e52
+cmp r0, r1
+ldreq r0, [r10, #0x1c]
+cmpeq r0, #1
+beq hide
+cmp r9, #0
+bne update
+mov r0, #0x144
+bl 0x0010BAB4
+cmp r0, #0
+beq failed
+bl 0x0028C97C
+mov r9, r0
+str r9, [r8, #0x10]
+@ Copy only animation owner/scalars, retaining independent native objects.
+@ The entry listener (+1C) is NOT copied: the local Player registers itself
+@ there (Player+324) and would then play the companion's animation-change
+@ effects (hookshot flash, WaitItem1Time) at its own hand. The entry
+@ constructor 28DD8C leaves it 0.
+ldr r6, [r4, #0x600]
+add r0, r6, #0x3c
+add r1, r9, #0x3c
+mov r7, #2
+copy_animation_owner:
+ldm r0, {r2,r3,r5}
+stm r1, {r2,r3,r5}
+ldrh r2, [r0, #0x16]
+strh r2, [r1, #0x14]
+mvn r2, #0
+strh r2, [r1, #0x16]
+add r0, r0, #0x20
+add r1, r1, #0x20
+subs r7, r7, #1
+bne copy_animation_owner
+update:
+@ Also clears a listener copied by an earlier version into a live wrapper.
+mov r0, #0
+str r0, [r9, #0x58]
+str r0, [r9, #0x78]
+mov r0, r9
+ldr r1, [r8, #0xc]
+bl palette_for_model
+ldrh r0, [r8, #0x38]
+cmp r0, #0xb0
+strhlo r0, [r9, #0x50]
+ldrh r0, [r8, #0x3a]
+cmp r0, #0xb0
+strhlo r0, [r9, #0x70]
+@ selectAnimation consumes and clears each wrapper's blend-enable byte.
+@ Set it every frame; duration zero still gives the source's immediate cuts.
+mov r0, #1
+strb r0, [r9, #0x42]
+strb r0, [r9, #0x62]
+ldrh r0, [r8, #0x3c]
+str r0, [r9, #0x44]
+ldrh r0, [r8, #0x3e]
+str r0, [r9, #0x64]
+mov r0, r9
+bl 0x0028C794
+mov r0, r9
+vldr s0, [r8, #0x34]
+bl 0x0028C4F4
+ldr r0, [r10]
+ldr r1, =0x31444e52
+cmp r0, r1
+addeq r0, r10, #0x1c
+addne r0, r4, #0x400
+addne r0, r0, #0x1ac
+str r0, [sp]
+mov r0, r9
+add r1, r8, #0x40
+ldr r2, [r8, #0x30]
+add r3, r8, #0x24
+bl 0x0028C090
+bl 0x00692A00
+mov r0, r9
+bl 0x0028C038
+mov r0, r9
+mov r1, #1
+bl 0x0028C054
+mov r0, #1
+str r0, [r8, #0x14]
+b palette_service
+hide:
+cmp r9, #0
+beq hidden
+mov r0, r9
+mov r1, #0
+bl palette_for_model
+mov r0, r9
+mov r1, #0
+bl 0x0028C054
+mov r1, #0
+str r1, [r9, #0x100]
+ldr r0, [r9, #0x10]
+str r1, [r0, #0x134]
+ldr r0, [r9, #0x14]
+str r1, [r0, #0x134]
+hidden:
+mov r0, #2
+str r0, [r8, #0x14]
+b palette_service
+failed:
+mov r0, #3
+str r0, [r8, #0x14]
+mov r0, #0
+str r0, [r8, #8]
+b palette_service
+wrong_owner:
+@ The old owning heap may be gone. Never inspect the old model or its texture.
+mov r0, #4
+str r0, [r8, #0x14]
+mov r0, #0
+str r0, [r8, #8]
+palette_service:
+bl 0x00692b40
+@ Ask the emulated kernel for a separate linear palette buffer. No game heap
+@ or assumed free RAM is consumed. svcControlMemory ABI: op, addr0, addr1,
+@ size in r0-r3; permissions in r4; result in r0 and mapped address in r1.
+ldr r0, [r8, #0x60]
+cmp r0, #0
+beq idle
+cmp r0, #2
+beq free_palette
+ldr r0, [r8, #0x64]
+cmp r0, #0
+bne idle
+mov r10, r4
+ldr r0, =0x10003
+mov r1, #0
+mov r2, #0
+mov r3, #0x80000
+mov r4, #3
+svc #1
+mov r4, r10
+str r0, [r8, #0x68]
+cmp r0, #0
+streq r1, [r8, #0x64]
+b palette_complete
+free_palette:
+ldr r1, [r8, #0x64]
+cmp r1, #0
+beq palette_complete
+mov r10, r4
+mov r0, #1
+mov r2, #0
+str r2, [r8, #0x164]
+mov r3, #0x80000
+mov r4, #0
+svc #1
+mov r4, r10
+str r0, [r8, #0x68]
+cmp r0, #0
+streq r0, [r8, #0x64]
+palette_complete:
+mov r0, #0
+str r0, [r8, #0x60]
+idle:
+ldr r0, [sp, #12]
+cmp r0, #0
+bne owner_jobs
+@ Private graphics outlive the actor heap. After an owner change only removal
+@ jobs may run. The queue acknowledges rejected work too, so Python can
+@ release a never-initialized reserve instead of waiting on it indefinitely.
+bl 0x007AFD00
+b release_busy
+owner_jobs:
+bl 0x007AFD00
+ldr r0, [sp, #8]
+ldr r1, [sp, #4]
+bl 0x0010983C
+release_busy:
+@ Consume one immutable private surface staging block per native frame.
+@ Keep the pointer published until the helper finishes: Python must never
+@ reuse that inactive slot while these bytes are still being consumed.
+ldr r1, [r8, #0x1f8]
+cmp r1, #0
+beq surface_complete
+ldr r0, [r8, #0x14]
+cmp r0, #4
+beq surface_discard
+ldr r0, [r1, #112]
+bl 0x00692880
+surface_discard:
+mov r0, #0
+str r0, [r8, #0x1f8]
+surface_complete:
+bl 0x00692100
+ldr r0, [r8, #0x15c]
+bl 0x00692E08
+ldr r0, [r8, #0x160]
+bl 0x00692E08
+mov r0, #0
+str r0, [r8, #0x54]
+ldr r0, [r8, #0x50]
+add r0, r0, #1
+str r0, [r8, #0x50]
+finish:
+ldr r0, [sp, #16]
+vmsr fpscr, r0
+ldr r0, [sp, #20]
+msr cpsr_f, r0
+add sp, sp, #24
+vpop {d0-d15}
+pop {r0-r12}
+pop {r4-r7, pc}
+@ r0=model, r1=colour index. Only swap a wrapper known to belong to us.
+@ Called only after the owning actor handle and local body have matched.
+palette_for_model:
+push {r4-r6, lr}
+mov r4, r0
+ldr r5, [r8, #0x74]
+cmp r5, #0
+beq palette_return
+ldr r6, [r4, #0x18]
+ldr r6, [r6, #0x14]
+ldr r0, [r6, #4]
+cmp r0, r5
+beq palette_known
+ldr r2, [r8, #0x64]
+cmp r0, r2
+bne palette_return
+palette_known:
+mov r2, r5
+cmp r1, #3
+ldreq r2, [r8, #0x64]
+cmp r2, #0
+beq palette_return
+cmp r0, r2
+beq palette_return
+str r2, [r6, #4]
+mov r0, #1
+strb r0, [r6, #0x26]
+palette_return:
+pop {r4-r6, pc}
+.ltorg

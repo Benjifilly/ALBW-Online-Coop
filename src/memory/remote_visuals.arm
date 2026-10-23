@@ -1,0 +1,95 @@
+@ Checked visual payload at mailbox+80. No network pointers, actor writes,
+@ constructors, inventory updates or gameplay callbacks are used here.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r4-r8,lr}
+mov r4, r9
+ldr r5, [r8, #0x168]
+ldr r0, [r5]
+ldr r1, =0x31444e52
+cmp r0, r1
+bne visuals_return
+mov r0, r4
+ldr r1, [r5, #4]
+ldr r2, [r5, #8]
+bl 0x0028C484
+mov r0, r4
+ldr r1, [r5, #0x10]
+ldr r2, [r5, #0xc]
+bl 0x004CE99C
+mov r0, r4
+ldr r1, [r5, #0x14]
+bl 0x0028C434
+mov r0, r4
+ldr r1, [r5, #0x18]
+bl 0x00169A40
+ldr r6, [r4, #0x10]
+@ Preserve the sender's final world transform, including jump/landing offsets.
+add r0, r5, #0x24
+add r1, r6, #0x80
+vldmia r0, {s0-s11}
+vstmia r1, {s0-s11}
+add r0, r5, #0x54
+add r1, r6, #0x74
+ldm r0, {r2,r3,r7}
+stm r1, {r2,r3,r7}
+ldr r0, [r6, #0x164]
+orr r0, r0, #0x40000000
+str r0, [r6, #0x164]
+@ Correct phase once per received snapshot, allowing native 60 Hz advancement
+@ between snapshots rather than resetting the animation on every frame.
+ldr r0, [r5, #0x88]
+ldr r1, [r8, #0x10c]
+cmp r0, r1
+beq visuals_return
+str r0, [r8, #0x10c]
+ldr r0, [r4, #0x4c]
+add r1, r5, #0x60
+orr r2, r6, #0x80000000
+bl apply_phase
+ldr r0, [r4, #0x6c]
+add r1, r5, #0x74
+orr r2, r6, #0x80000000
+bl apply_phase
+visuals_return:
+pop {r4-r8,pc}
+nop
+nop
+apply_phase:
+push {r4-r6,lr}
+mov r4, r0
+mov r5, r1
+mov r6, r2
+ldr r0, [r4, #0xc]
+cmp r0, #1
+bne phase_return
+ldr r3, [r4, #0x14]
+ldr r0, [r3]
+ldr r1, [r5]
+cmp r0, r1
+bne phase_return
+ldr r0, [r3, #0x14]
+ldr r1, [r5, #0x10]
+cmp r0, r1
+bne phase_return
+ldmib r5, {r0-r2}
+add r3, r3, #8
+stm r3, {r0-r2}
+mov r0, #1
+strb r0, [r3, #0x1e]
+@ updateModel already evaluated an active crossfade this frame. Evaluating
+@ it a second time for phase correction would consume its weight twice.
+@ The high bit is a local-only flag from the body caller. The wall caller
+@ still needs its first evaluation, including during a native wall blend.
+tst r6, #0x80000000
+ldrne r0, [r4, #0x88]
+cmpne r0, #0
+bne phase_return
+mov r0, r4
+bic r1, r6, #0x80000000
+mov r2, #0
+bl 0x00168E9C
+phase_return:
+pop {r4-r6,pc}
+.ltorg

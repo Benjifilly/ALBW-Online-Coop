@@ -1,0 +1,168 @@
+@ Additional visual contact after the native local-player grass contact.
+@ Native r8=batch,r4/r5=index,r6=records,r9=placement. Keep its result.
+@ Set only the existing bend impulse/direction/visual-active fields, as the
+@ native contact does each frame while +CC is set (2364D8..236644): impulse
+@ F1C71C72 and the angle of (player - instance). No cuts, collision
+@ registration, player changes, native timers or second update.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r0-r12,lr}
+mrs r0, cpsr
+vmrs r1, fpscr
+push {r0,r1}
+vpush {d0-d15}
+ldr r0, [sp, #136]
+cmp r0, #0
+bne foliage_finish
+ldr r0, =0x7afffc
+ldr r4, [r0]
+cmp r4, #0x14000000
+blo foliage_finish
+cmp r4, #0x1c000000
+bhs foliage_finish
+tst r4, #3
+bne foliage_finish
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne foliage_finish
+ldr r0, [r4, #0x18]
+ldr r1, [r0, #0x614]
+cmp r1, #0x08000000
+blo foliage_finish
+cmp r1, #0x1f000000
+bhs foliage_finish
+ldrh r1, [r1, #0x42]
+cmp r1, #95
+beq foliage_finish
+@ A bounded visual footprint, independent of attack/trample ranges. The
+@ player's attack-range field can hold FLT_MAX while inactive.
+vldr s12, foliage_radius_squared
+ldr r5, [sp, #168]
+ldr r6, [sp, #152]
+ldr r0, [sp, #156]
+cmp r6, r0
+bne foliage_finish
+@ Shared identity (world_mass), restricted to the grass/lawn layout.
+mov r0, r5
+mov r1, r6
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq foliage_finish
+ldr r1, [r1, #4]
+ldr r2, =0x6ee60c
+cmp r1, r2
+ldrne r2, =0x6ec2d8
+cmpne r1, r2
+bne foliage_finish
+@ MassGrass bushes are solid: the other Link touches them about one tile
+@ from their centre. Lawn tufts are walked through: a short footprint.
+ldr r2, =0x6ee60c
+cmp r1, r2
+vldreq s12, foliage_bush_radius_squared
+mov r7, r0
+ldr r0, [r5, #0x634]
+ldr r1, [sp, #160]
+cmp r0, r1
+bne foliage_finish
+ldrb r0, [r7]
+cmp r0, #0
+bne foliage_finish
+ldrh r0, [r7, #0xcc]
+cmp r0, #0
+bne foliage_finish
+@ Strike only a spring that has almost stopped (|+E4| below 1 degree per
+@ frame). Striking every frame, as the pushed native contact does, drives
+@ the spring (v=(v-.3a)*.75, 237080) to about 66 degrees; waiting for an
+@ exact rest gave a faint 24-degree nod. This keeps about 40 degrees.
+ldr r0, [r7, #0xe4]
+cmp r0, #0
+rsblt r0, r0, #0
+ldr r1, foliage_strike_speed
+cmp r0, r1
+bhs foliage_finish
+ldr r0, [r5, #0x480]
+ldr r8, [r0, r6, lsl #2]
+ldr r0, [sp, #172]
+cmp r8, r0
+bne foliage_finish
+ldr r9, [r4, #0xa8]
+add r0, r4, #0x59000
+cmp r9, r0
+addne r0, r0, #0x100
+cmpne r9, r0
+bne foliage_finish
+ldr r10, [r9]
+tst r10, #1
+bne foliage_finish
+ldr r0, [r4, #0x74]
+ldr r1, [r9, #4]
+sub r0, r0, r1
+cmp r0, #12
+bhi foliage_finish
+ldr r11, [r9, #8]
+cmp r11, #3
+bhi foliage_finish
+cmp r11, #0
+beq foliage_finish
+add r6, r9, #16
+foliage_peer:
+vldr s0, [r6]
+vldr s1, [r6, #4]
+vldr s2, [r6, #8]
+vldr s3, [r8, #4]
+vldr s4, [r8, #8]
+vldr s5, [r8, #12]
+vsub.f32 s6, s0, s3
+vsub.f32 s7, s1, s4
+vsub.f32 s8, s2, s5
+vabs.f32 s1, s7
+vldr s3, foliage_height
+vcmp.f32 s1, s3
+vmrs apsr_nzcv, fpscr
+bhi foliage_next
+bvs foliage_next
+vmul.f32 s0, s6, s6
+vmla.f32 s0, s8, s8
+vcmp.f32 s0, s12
+vmrs apsr_nzcv, fpscr
+bhi foliage_next
+bvs foliage_next
+ldr r0, [r9]
+cmp r0, r10
+bne foliage_finish
+@ Direction companion-instance with the native angle routine.
+sub sp, sp, #16
+vstr s6, [sp]
+vstr s7, [sp, #4]
+vstr s8, [sp, #8]
+mov r0, sp
+ldr r12, =0x68c668
+blx r12
+add sp, sp, #16
+str r0, [r7, #0xd0]
+ldr r0, =0xf1c71c72
+str r0, [r7, #0xe4]
+mov r0, #1
+strb r0, [r7, #0x100]
+b foliage_finish
+foliage_next:
+add r6, r6, #16
+subs r11, r11, #1
+bne foliage_peer
+foliage_finish:
+vpop {d0-d15}
+pop {r0,r1}
+vmsr fpscr, r1
+msr cpsr_fs, r0
+pop {r0-r12,lr}
+cmp r0, #0
+ldr pc, =0x236458
+.balign 4
+foliage_radius_squared: .float 0.36
+foliage_bush_radius_squared: .float 1.0
+foliage_height: .float 1.0
+foliage_strike_speed: .word 0x00B60B61
+.ltorg

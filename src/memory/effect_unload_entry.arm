@@ -1,0 +1,7 @@
+.syntax unified
+.arm
+push {r12,lr}
+bl 0x692be0
+pop {r12,lr}
+ldr r0, [r0, #0x2c]
+b 0x4a2684

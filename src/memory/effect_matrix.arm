@@ -1,0 +1,29 @@
+@ Locally constructed {instance,id,finalMatrix[12]}; reject recycled particles.
+.syntax unified
+.arm
+push {r4,lr}
+mov r4, r0
+ldm r4, {r0,r1}
+cmp r0, #0
+beq effect_done
+ldr r2, [r0, #0x1c]
+cmp r1, r2
+bne effect_done
+ldr r2, [r0, #0x20]
+cmp r2, #0
+beq effect_done
+ldr r1, [r0, #0x24]
+ldr r3, [r2, #0xc]
+cmp r1, r3
+bne effect_done
+ldr r1, [r2, #4]
+cmp r1, #0
+ble effect_done
+ldr r1, [r0, #0x3c]
+bic r1, r1, #1
+str r1, [r0, #0x3c]
+mov r0, r2
+add r1, r4, #8
+bl 0x3e6db4
+effect_done:
+pop {r4,pc}

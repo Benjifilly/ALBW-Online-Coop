@@ -1,0 +1,59 @@
+@ Replaces "bl 1DD530" at 1DCC34 in Player::updateModel 1DC9C8 (r4 = Player).
+@ The original call runs first: it re-shows Link's body every frame and
+@ prepares his model and equipment materials. Then, while this Link
+@ spectates (player_life control +4), his visuals are hidden with the game's
+@ own sequence (the hide half of 1DC844): body, face parts, held items,
+@ shadow. Hiding him by +6BC instead would skip all of 1DD530.
+@ r0-r3, r12 and lr are free after the call, as at the original site.
+.syntax unified
+.arm
+hide_base:
+ldr r12, =0x1dd530
+blx r12
+push {r5, r6}
+adr r5, hide_base
+sub r5, r5, #LIFE_CONTROL_DELTA
+ldr r6, [r5]
+ldr r1, =0x4546494c
+cmp r6, r1
+bne hide_done
+ldr r6, [r5, #4]
+cmp r6, #0
+beq hide_done
+@ The registered local Player only.
+ldr r1, =0x70fb60
+ldr r1, [r1]
+cmp r1, #0
+beq hide_done
+ldr r1, [r1, #0x10]
+cmp r1, r4
+bne hide_done
+ldr r0, [r4, #0x600]
+mov r1, #0
+ldr r12, =0x28c054
+blx r12
+ldr r0, [r4, #0x604]
+mov r1, #0
+ldr r12, =0x2d16ac
+blx r12
+mov r5, #0
+hide_items:
+add r0, r4, r5, lsl #2
+ldr r0, [r0, #0x630]
+cmp r0, #0
+beq hide_next
+mov r1, #0
+ldr r12, =0x2d4164
+blx r12
+hide_next:
+add r5, r5, #1
+cmp r5, #0x19
+blt hide_items
+ldr r0, [r4, #0x60c]
+mov r1, #0
+ldr r12, =0x151148
+blx r12
+hide_done:
+pop {r5, r6}
+ldr pc, =0x1dcc38
+.ltorg

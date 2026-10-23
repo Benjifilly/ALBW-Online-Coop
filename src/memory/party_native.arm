@@ -1,0 +1,171 @@
+@ Appele par player_life, registres volatils et VFP deja sauvegardes.
+@ Commandes fermees : 1 retour de salle, 2 arrivee et perte de 15 %.
+.syntax unified
+.arm
+.fpu vfpv2
+party_entry:
+push {r4-r8,lr}
+vpush {d4-d7}
+mov r4, r0
+adr r5, party_entry
+add r5, r5, #0x800
+ldr r0, [r5]
+ldr r1, =0x50525459
+cmp r0, r1
+bne party_done
+ldr r6, [r5, #4]
+ldr r0, [r5, #8]
+cmp r6, r0
+beq party_done
+@ Le mode collectif doit etre reellement arme.
+mov r0, r5
+sub r0, r0, #0x4000
+sub r0, r0, #0x400
+ldr r1, [r0, #8]
+cmp r1, #0
+beq party_done
+ldr r0, [r0, #4]
+cmp r0, #2
+bne party_done
+ldrb r0, [r4, #0x598]
+cmp r0, #0
+beq party_done
+ldr r0, [r4, #0x614]
+cmp r0, #0
+beq party_done
+ldrh r0, [r0, #0x42]
+cmp r0, #1
+bhi party_done
+ldr r0, =0x70b728
+ldr r0, [r0]
+cmp r0, #0
+ldrne r0, [r0, #0x44]
+cmpne r0, #0
+bne party_done
+ldr r0, =0x7afe7c
+ldr r7, [r0]
+ldr r0, [r5, #0x14]
+cmp r0, r7
+bne party_refuse
+ldr r0, =0x7afd54
+ldr r1, [r0]
+cmp r1, r7
+beq party_generation_ok
+@ Nouvelle partie chargee : les recus de l'ancienne ne s'appliquent plus.
+mov r1, #0
+ldr r2, =0x7aff7c
+str r1, [r2]
+ldr r2, =0x7affac
+str r1, [r2]
+ldr r2, =0x7afff8
+str r1, [r2]
+str r7, [r0]
+party_generation_ok:
+ldr r8, [r5, #0x18]
+cmp r8, #0
+beq party_refuse
+ldr r0, [r5, #0x10]
+cmp r0, #1
+beq party_warp
+cmp r0, #2
+bne party_refuse
+@ Une demande de salle ou un fondu n'est pas une arrivee.
+ldr r0, =0x709df8
+ldr r0, [r0]
+cmp r0, #0
+beq party_done
+ldrsb r1, [r0, #0x48]
+cmn r1, #1
+bne party_done
+ldrb r1, [r0, #0x18]
+ldr r2, [r5, #0x1c]
+cmp r1, r2
+bne party_done
+ldr r1, [r0, #0x1c]
+ldr r2, [r5, #0x20]
+cmp r1, r2
+bne party_done
+ldrh r1, [r0, #0x20]
+ldrh r2, [r5, #0x24]
+cmp r1, r2
+bne party_done
+ldr r0, =0x712450
+ldr r0, [r0]
+cmp r0, #0
+beq party_done
+ldr r12, =0x520b20
+blx r12
+cmp r0, #0
+bne party_done
+ldr r0, =0x7affac
+ldr r0, [r0]
+cmp r0, r8
+blo party_done
+@ Le debit et son recu se suivent sur le meme thread du jeu.
+ldr r7, =0x7aff7c
+ldr r0, [r7]
+cmp r0, r8
+bhs party_place
+add r0, r4, #0x400
+ldrh r0, [r0, #0xfc]
+ldr r1, =9999
+cmp r0, r1
+bhi party_refuse
+@ floor(rubis * 15 / 100), sans division materielle ARM.
+mov r1, #15
+mul r0, r1, r0
+mov r8, #0
+party_divide:
+cmp r0, #100
+subhs r0, r0, #100
+addhs r8, r8, #1
+bhs party_divide
+mov r0, r4
+add r0, r0, #0x400
+add r0, r0, #0xc
+rsb r1, r8, #0
+ldr r12, =0x255aec
+blx r12
+ldr r0, =0x7afff8
+str r8, [r0]
+ldr r0, [r5, #0x18]
+str r0, [r7]
+party_place:
+@ L'entree native a deja place Link et sa camera pendant le fondu.
+ldr r0, =0x7afff8
+ldr r0, [r0]
+str r0, [r5, #0x3c]
+b party_success
+party_warp:
+ldr r7, =0x7affac
+ldr r0, [r7]
+cmp r0, r8
+bhs party_success
+ldr r0, =0x709df8
+ldr r0, [r0]
+cmp r0, #0
+beq party_done
+add r1, r5, #0x1c
+mov r2, #2
+mov r3, #0
+ldr r12, =0x4ef3f0
+blx r12
+cmp r0, #0
+beq party_refuse
+str r8, [r7]
+party_success:
+mov r0, #1
+b party_ack
+party_refuse:
+mov r0, #0
+party_ack:
+str r0, [r5, #0xc]
+str r6, [r5, #8]
+party_done:
+vpop {d4-d7}
+pop {r4-r8,pc}
+.ltorg
+.org 0x800
+party_control:
+.word 0x50525459
+.space 0x3c

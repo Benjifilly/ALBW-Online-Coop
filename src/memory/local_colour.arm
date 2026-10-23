@@ -1,0 +1,36 @@
+@ Entered instead of the armour load at 1DCA48. No SDK calls or heap changes.
+@ A live lease and matching actor are required; otherwise the original load
+@ and comparisons execute normally. r0-r3 are preserved on the override path.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r0-r3}
+ldr r1, =0x007AFB00
+ldr r0, [r1, #0x5c]
+cmp r0, #0
+beq normal_colour
+ldr r0, [r1, #0x18]
+cmp r0, r4
+bne normal_colour
+ldr r0, [r4, #0x2cc]
+ldr r2, [r1, #0x6c]
+cmp r0, r2
+bne normal_colour
+ldr r0, [r4, #0x600]
+ldr r2, [r1, #0x70]
+cmp r0, r2
+bne normal_colour
+ldr r0, [r1, #0x58]
+cmp r0, #4
+bhs normal_colour
+cmp r0, #3
+moveq r0, #1
+vmov s0, r0
+vcvt.f32.u32 s0, s0
+pop {r0-r3}
+b 0x001DCA68
+normal_colour:
+pop {r0-r3}
+ldr r0, [r4, #0x4b0]
+b 0x001DCA4C
+.ltorg

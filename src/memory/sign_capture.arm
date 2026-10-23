@@ -1,0 +1,87 @@
+@ Observe a MojSignboard hit decision, then perform the displaced call.
+@ Hook 1C2D50 replaces "bl 65BB50": r0=state machine (sign+0x788),
+@ r1=new state, r4=sign. Writes only the world event ring, never during a
+@ replay; then calls changeState with the original return address 1C2D54.
+@ Ring event: handle, index 0, effect (from<<4|to), room, owner, from.
+.syntax unified
+.arm
+push {r0-r12,lr}
+mrs r0, cpsr
+push {r0}
+ldr r0, =0x7afffc
+ldr r4, [r0]
+cmp r4, #0x14000000
+blo sign_return
+cmp r4, #0x1c000000
+bhs sign_return
+tst r4, #3
+bne sign_return
+ldr r0, [r4, #0x64]
+cmp r0, #0
+bne sign_return
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne sign_return
+@ Saved registers: r0 +0x04, r1 +0x08, r4 +0x14.
+ldr r0, [sp, #0x14]
+add r12, r4, #0x2400
+blx r12
+cmp r0, #0
+beq sign_return
+mov r5, r0
+mov r6, r1
+ldrh r2, [r6]
+ldr r3, =277
+cmp r2, r3
+bne sign_return
+@ The call must target this sign's own machine and a replicated state.
+ldrh r2, [r6, #2]
+add r7, r5, r2
+ldr r0, [sp, #0x04]
+cmp r0, r7
+bne sign_return
+ldr r8, [sp, #0x08]
+cmp r8, #15
+bhi sign_return
+ldr r0, [r6, #8]
+mov r1, #1
+tst r0, r1, lsl r8
+beq sign_return
+ldrsb r9, [r7, #4]
+and r9, r9, #15
+ldr r0, [r4, #0x58]
+ldr r1, [r4, #0x5c]
+sub r1, r0, r1
+cmp r1, #64
+bhs sign_overflow
+and r1, r0, #63
+add r3, r4, #0x100
+add r3, r3, r1, lsl #5
+ldr r1, [r5, #0x2cc]
+str r1, [r3, #4]
+mov r1, #0
+str r1, [r3, #8]
+orr r1, r8, r9, lsl #4
+str r1, [r3, #12]
+ldr r1, [r4, #0x34]
+str r1, [r3, #0x10]
+ldr r1, [r4, #0x38]
+str r1, [r3, #0x14]
+ldr r1, [r4, #0x24]
+str r1, [r3, #0x18]
+str r9, [r3, #0x1c]
+add r0, r0, #1
+str r0, [r3]
+str r0, [r4, #0x58]
+b sign_return
+sign_overflow:
+mov r0, #1
+str r0, [r4, #0x60]
+sign_return:
+pop {r0}
+msr cpsr_f, r0
+pop {r0-r12,lr}
+ldr lr, =0x1c2d54
+ldr pc, =0x65bb50
+.ltorg

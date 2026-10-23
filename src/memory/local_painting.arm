@@ -1,0 +1,42 @@
+@ Local material pointers only; its owning player/body were checked by main.
+@ +5C expiring selects originals before the palette allocation can be freed.
+.syntax unified
+.arm
+push {r4-r7,lr}
+ldr r4, [r8, #0x164]
+cmp r4, #0
+beq local_painting_return
+ldr r0, [r4]
+ldr r1, =0x4c50414c
+cmp r0, r1
+bne local_painting_return
+ldr r0, [r8, #0x14]
+cmp r0, #4
+beq local_painting_return
+ldr r0, [r8, #0x18]
+ldr r0, [r0, #0x604]
+cmp r0, #0
+beq local_painting_return
+ldr r0, [r0, #0x28]
+ldr r1, [r4, #0xc]
+cmp r0, r1
+bne local_painting_return
+ldr r0, [r8, #0x5c]
+cmp r0, #0
+ldreq r5, [r4, #8]
+ldrne r5, [r4, #4]
+mov r7, r5
+ldr r6, [r5], #4
+cmp r6, #96
+bhi local_painting_return
+cmp r6, #0
+beq local_painting_return
+local_painting_bind:
+ldm r5!, {r0,r1}
+str r1, [r0]
+subs r6, r6, #1
+bne local_painting_bind
+str r7, [r4, #0x10]
+local_painting_return:
+pop {r4-r7,pc}
+.ltorg

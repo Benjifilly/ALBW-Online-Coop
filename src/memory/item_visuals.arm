@@ -1,0 +1,103 @@
+@ Closed held-item descriptors, r0=world. World+B4 points here. The table at
+@ world+66800 holds 24 local pointers into a private render heap (held tools,
+@ projectiles and a hook's 9 chain links). Network data
+@ never supplies those pointers. Each full descriptor is double-buffered.
+@ Common presentation consumes the original world matrix. Its return value
+@ gates EVERY mesh: an expired lease, a wall merge or another room hides all
+@ meshes, including the hookshot's second mesh, never just mesh zero.
+.syntax unified
+.arm
+push {r4-r11,lr}
+sub sp,sp,#4
+mov r4,r0
+add r12,r4,#0x1400
+blx r12
+mov r10,r0
+mov r0,#0
+str r0,[sp]
+ldr r8,=0x7afb00
+ldr r0,[r8,#0x168]
+add r1,r8,#0x80
+cmp r0,r1
+beq items_render_state
+cmp r0,#0x08000000
+blo items_table
+cmp r0,#0x1f000000
+bhs items_table
+items_render_state:
+ldr r1,[r0]
+ldr r2,=0x31444e52
+cmp r1,r2
+ldreq r0,[r0,#0x1c]
+cmpeq r0,#1
+moveq r0,#1
+streq r0,[sp]
+items_table:
+add r5,r4,#0x66000
+add r5,r5,#0x800
+mov r6,#24
+items_next:
+ldr r11,[r5],#4
+cmp r11,#0x08000000
+blo items_skip
+cmp r11,#0x1f000000
+bhs items_skip
+tst r11,#3
+bne items_skip
+ldr r0,[r11]
+ldr r1,=0x57414c4c
+cmp r0,r1
+bne items_skip
+ldr r0,[r11,#0xc]
+cmp r0,#0x08000000
+blo items_skip
+cmp r0,#0x1f000000
+bhs items_skip
+ldr r0,[r11,#0xb0]
+cmp r0,#1
+blo items_skip
+cmp r0,#4
+bhi items_skip
+cmp r10,#1
+bne items_hide
+ldr r0,[sp]
+cmp r0,#0
+beq items_present
+@ Only local projectile descriptors opt out of hiding a held item in a wall.
+ldr r0,[r11,#0xb8]
+cmp r0,#1
+bne items_hide
+items_present:
+mov r0,r11
+ldr r8,=0x7afb00
+ldr r12,=0x692e08
+blx r12
+mov r9,r0
+b items_meshes
+items_hide:
+mov r0,r11
+mov r1,#0
+ldr r12,=0x6926e0
+blx r12
+mov r9,#0
+items_meshes:
+mov r7,#0
+items_mesh:
+ldr r0,[r11,#0xc]
+ldr r1,[r11,#0xb4]
+lsr r1,r1,r7
+and r1,r1,#1
+and r1,r1,r9
+mov r2,r7
+ldr r12,=0x4ce9f0
+blx r12
+add r7,r7,#1
+ldr r0,[r11,#0xb0]
+cmp r7,r0
+blo items_mesh
+items_skip:
+subs r6,r6,#1
+bne items_next
+add sp,sp,#4
+pop {r4-r11,pc}
+.ltorg

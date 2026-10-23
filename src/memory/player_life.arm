@@ -1,0 +1,290 @@
+@ Replaces the first instruction of the Player calc 1DE420 (r0 = Player).
+@ Only for the registered local Player, then:
+@ - spectator ("ghost", control +4 under a frame lease +8): this Link waits
+@   for a weathervane. His calc still runs, as the camera only advances in
+@   it (23/10), but he is hidden after his model update (life_hide.arm), invincible
+@   (+6C1, checked by the damage routine 1DD48C), his input is frozen by
+@   input_lock.arm as during events, and he stands on the presented companion: only
+@   his position moves, so the camera follows that displacement. A warp
+@   request (+C serial, desc +18, type +24) calls the game's own scene change
+@   4EF3F0(game, &desc, type, 0) from here, as door code does; result +14.
+@ - otherwise soft collision: when the presented companion overlaps him, Link
+@   moves away by part of the overlap before the game moves him and resolves
+@   his walls (his old position +368 is already saved). The companion's game
+@   does the same: walking into him pushes him gently. Alive, no event, not
+@   painted/hooked (+5B0 == 1), companion in this room, not painted, same floor.
+@ Preserves every register and flag, then runs the displaced push.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r0-r3,r12,lr}
+mrs r1, cpsr
+vmrs r2, fpscr
+push {r1,r2}
+vpush {d0-d3}
+@ The registered local Player only.
+ldr r2, =0x70fb60
+ldr r2, [r2]
+cmp r2, #0
+beq life_done
+ldr r2, [r2, #0x10]
+cmp r2, r0
+bne life_done
+adr r12, life_control
+add r12, r12, #0x3c00
+ldr r1, [r12, #0x800]
+ldr r2, =0x50525459
+cmp r1, r2
+blxeq r12
+ldr r0, [sp, #40]
+adr r1, life_control
+ldr r2, [r1]
+ldr r3, =0x4546494c
+cmp r2, r3
+bne life_push
+ldr r2, [r1, #4]
+cmp r2, #0
+beq life_shown
+ldr r3, [r1, #8]
+cmp r3, #0
+streq r3, [r1, #4]
+beq life_shown
+sub r3, r3, #1
+str r3, [r1, #8]
+ldr r3, [r1, #0x28]
+add r3, r3, #1
+str r3, [r1, #0x28]
+mov r3, #1
+str r3, [r1, #0x2c]
+strb r3, [r0, #0x6c1]
+@ +6BC stays 1: 1DD530 still prepares his model each frame; life_hide.arm
+@ hides him right after it.
+strb r3, [r0, #0x6bc]
+@ During an event (scene change, entrance walk) the game drives him.
+ldr r2, =0x70b728
+ldr r2, [r2]
+cmp r2, #0
+ldrne r2, [r2, #0x44]
+cmpne r2, #0
+bne life_done
+@ The scene change refuses a Link that is not idle (0) or walking (1)
+@ (4EF3F0, 23/10): a warp waits for one. He is still pinned meanwhile, so a
+@ fall or landing on the companion's path never loses the camera.
+ldr r2, [r0, #0x614]
+cmp r2, #0x08000000
+blo life_follow
+cmp r2, #0x1f000000
+bhs life_follow
+ldrh r2, [r2, #0x42]
+cmp r2, #1
+bhi life_follow
+@ A new warp request runs once, then its result is published.
+ldr r2, [r1, #0xc]
+ldr r3, [r1, #0x10]
+cmp r2, r3
+beq life_follow
+str r2, [r1, #0x10]
+ldr r0, =0x709df8
+ldr r0, [r0]
+cmp r0, #0
+beq life_warped
+add r1, r1, #0x18
+ldr r2, life_type
+mov r3, #0
+ldr r12, =0x4ef3f0
+blx r12
+life_warped:
+adr r1, life_control
+str r0, [r1, #0x14]
+ldr r0, [sp, #40]
+life_follow:
+adr r1, life_control
+ldr r2, [r1, #4]
+cmp r2, #2
+beq life_done
+bl life_companion
+cmp r1, #0
+beq life_done
+@ Only his position: never his old position +368 too. The camera follows
+@ his displacement (+3D0 - +368, saved by the game before this calc).
+@ He glides (at most life_glide a frame horizontally): after a warp he
+@ arrives at the entrance, and the camera does not follow one big jump
+@ (23/10); walking companions move less than that, so he stays exact.
+add r1, r1, #0x24
+vldmia r1, {s3-s5}
+add r12, r0, #0x3d0
+vldmia r12, {s0-s2}
+vsub.f32 s6, s3, s0
+vsub.f32 s7, s5, s2
+vmul.f32 s1, s6, s6
+vmla.f32 s1, s7, s7
+vsqrt.f32 s1, s1
+vldr s3, life_glide
+vcmpe.f32 s1, s3
+vmrs apsr_nzcv, fpscr
+bls life_glided
+vdiv.f32 s3, s3, s1
+vmul.f32 s6, s6, s3
+vmul.f32 s7, s7, s3
+life_glided:
+vadd.f32 s0, s0, s6
+vadd.f32 s2, s2, s7
+vmov.f32 s1, s4
+vstmia r12, {s0-s2}
+b life_done
+@ Shown and vulnerable again once, after a spectator ends (the game never
+@ resets +6BC or +6C1 by itself).
+life_shown:
+ldr r2, [r1, #0x2c]
+cmp r2, #0
+beq life_push
+mov r2, #0
+str r2, [r1, #0x2c]
+strb r2, [r0, #0x6c1]
+mov r2, #1
+strb r2, [r0, #0x6bc]
+@ His shadow back (life_hide.arm hid it; the game re-shows the rest).
+ldr r0, [r0, #0x60c]
+mov r1, #1
+ldr r12, =0x151148
+blx r12
+ldr r0, [sp, #40]
+life_push:
+@ Alive.
+add r2, r0, #0x500
+ldrb r3, [r2, #0x98]
+cmp r3, #0
+beq life_done
+@ No event or cutscene running.
+ldr r2, =0x70b728
+ldr r2, [r2]
+cmp r2, #0
+ldrne r2, [r2, #0x44]
+cmpne r2, #0
+bne life_done
+@ Normal motion: wall merge and hookshot pull interpolate with +5B0 < 1.
+add r2, r0, #0x500
+vldr s0, [r2, #0xb0]
+vldr s1, push_one
+vcmp.f32 s0, s1
+vmrs apsr_nzcv, fpscr
+bne life_done
+bl life_companion
+cmp r1, #0
+beq life_done
+add r2, r0, #0x3d0
+vldmia r2, {s0-s2}
+add r3, r1, #0x24
+vldmia r3, {s3-s5}
+vsub.f32 s6, s0, s3
+vsub.f32 s7, s2, s5
+@ Same floor. Unordered (NaN) compares set C: "hs" leaves.
+vsub.f32 s4, s1, s4
+vabs.f32 s4, s4
+vldr s5, push_height
+vcmpe.f32 s4, s5
+vmrs apsr_nzcv, fpscr
+bhs life_done
+vmul.f32 s3, s6, s6
+vmla.f32 s3, s7, s7
+vldr s5, push_reach2
+vcmpe.f32 s3, s5
+vmrs apsr_nzcv, fpscr
+bhs life_done
+vsqrt.f32 s3, s3
+@ step = min((reach - d) * rate, cap)
+vldr s1, push_reach
+vsub.f32 s1, s1, s3
+vldr s4, push_rate
+vmul.f32 s1, s1, s4
+vldr s4, push_cap
+vcmpe.f32 s1, s4
+vmrs apsr_nzcv, fpscr
+vmovgt.f32 s1, s4
+@ Exactly on top of each other: leave along +x.
+vldr s4, push_tiny
+vcmp.f32 s3, s4
+vmrs apsr_nzcv, fpscr
+vldrls s6, push_one
+vsubls.f32 s7, s7, s7
+vmovls.f32 s3, s6
+vdiv.f32 s1, s1, s3
+vmla.f32 s0, s6, s1
+vmla.f32 s2, s7, s1
+add r2, r0, #0x3d0
+vstr s0, [r2]
+vstr s2, [r2, #8]
+life_done:
+vpop {d0-d3}
+pop {r1,r2}
+vmsr fpscr, r2
+msr cpsr_f, r1
+pop {r0-r3,r12,lr}
+push {r4-r10,lr}
+ldr pc, =0x1de424
+
+@ r1 = the renderer mailbox when its companion is presented in this very
+@ room and not painted, else 0. Uses r1-r3, r12 only.
+life_companion:
+ldr r1, =0x7afb00
+ldr r2, [r1]
+ldr r3, =0x434f4f50
+cmp r2, r3
+bne life_none
+ldr r2, [r1, #8]
+cmp r2, #1
+bne life_none
+ldr r2, [r1, #0x14]
+cmp r2, #1
+bne life_none
+ldr r2, =0x709df8
+ldr r2, [r2]
+cmp r2, #0
+beq life_none
+ldrb r3, [r2, #0x18]
+ldr r12, [r1, #0x1c]
+cmp r3, r12
+bne life_none
+ldr r3, [r2, #0x1c]
+ldr r12, [r1, #0x20]
+cmp r3, r12
+bne life_none
+@ A painted (wall) companion has no body in the room.
+ldr r2, [r1, #0x168]
+ldr r3, =0x7afb80
+cmp r2, r3
+addne r3, r1, #0x16c
+cmpne r2, r3
+bne life_none
+ldr r3, [r2]
+ldr r12, =0x31444e52
+cmp r3, r12
+bxne lr
+ldr r3, [r2, #0x1c]
+cmp r3, #1
+bxne lr
+life_none:
+mov r1, #0
+bx lr
+
+.balign 4
+push_one: .float 1.0
+push_height: .float 1.0
+push_reach: .float 1.0
+push_reach2: .float 1.0
+push_rate: .float 0.3
+push_cap: .float 0.08
+push_tiny: .float 0.001
+life_glide: .float 0.8
+.ltorg
+@ Owned by player_life.py: magic, ghost, lease, warp requested/done/result,
+@ warp descriptor (course u8, stage u32, entrance u16, 2 bytes), type, frames,
+@ hidden by us (+2C).
+.org 0x400
+life_control:
+.word 0x4546494c
+.word 0, 0, 0, 0, 0
+.word 0, 0, 0
+life_type:
+.word 0
+.word 0, 0

@@ -1,0 +1,73 @@
+@ r0=private wall descriptor, r1=visible. RTT and Fresco use the same lease.
+.syntax unified
+.arm
+push {r4-r7,r12,lr}
+mov r4, r0
+mov r5, r1
+@ A held weapon may stay in an ordinary render pass after unregistering its
+@ G3D (4CF450 only disables the list node for certain exclusion masks).
+@ Equipment has one verified mesh: toggle that mesh as well as registration.
+ldr r0, [r4, #0xa0]
+cmp r0, #0
+bne fresco_register
+ldr r0, [r4, #0xc]
+mov r1, r5
+mov r2, #0
+bl 0x4ce9f0
+fresco_register:
+ldr r0, [r4, #0xc]
+mov r1, r5
+mov r2, #0
+bl 0x4cf450
+ldr r0, [r4, #0xa0]
+cmp r0, #2
+blo fresco_present_return
+cmp r0, #3
+bhi fresco_present_return
+ldr r6, [r4, #0xb0]
+ldr r7, [r4, #0xb4]
+cmp r6, #0
+cmpne r7, #0
+beq fresco_present_return
+cmp r5, #0
+beq fresco_present_hide
+@ The native Fresco mirrors U independently of the FlatLink's world matrix.
+mov r0, r6
+vldr s0, [r4, #0xb8]
+bl 0x2c151c
+mov r0, r6
+vldr s0, [r4, #0xbc]
+bl 0x2c15a8
+ldr r0, [r4, #0xa0]
+cmp r0, #3
+beq fresco_present_hide
+@ Switch the RTT only after this frame calculated the selected FlatLink.
+ldr r0, [r7, #0x184]
+ldr r1, [r4, #0xc]
+cmp r0, r1
+beq fresco_present_ready
+cmp r0, #0
+movne r1, #0
+movne r2, #0
+blne 0x4cf450
+mov r0, r7
+bl 0x2ff718
+mov r0, r7
+ldr r1, [r4, #0xc]
+mov r2, #1
+bl 0x2ff728
+fresco_present_ready:
+mov r0, r7
+bl 0x2ff598
+b fresco_present_surface
+fresco_present_hide:
+mov r0, r7
+bl 0x3001f4
+fresco_present_surface:
+mov r0, r6
+mov r1, r5
+mov r2, #0
+bl 0x4cf450
+fresco_present_return:
+pop {r4-r7,r12,pc}
+.ltorg

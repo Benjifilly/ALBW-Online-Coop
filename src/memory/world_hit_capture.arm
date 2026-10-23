@@ -1,0 +1,85 @@
+@ Read-only HitInfo + AttackDesc + candidate record (actor+7B4), kept local.
+@ 4F822C constructs a candidate; it has not yet committed to *(actor+43C).
+.syntax unified
+.arm
+push {r4-r10,lr}
+mov r4, r3
+mov r5, r0
+mov r6, r1
+mov r7, r2
+bl 0x400
+cmp r0, #0
+beq hit_return
+ldr r1, [r4, #0x94]
+ldr r2, [r5, #0x2cc]
+cmp r1, r2
+beq hit_return
+ldr r0, [r4, #0x84]
+ldr r1, [r4, #0x88]
+sub r1, r0, r1
+cmp r1, #64
+bhs hit_overflow
+and r1, r0, #63
+add r8, r4, #0x20000
+add r8, r8, r1, lsl #8
+ldr r1, [r5, #0x2cc]
+str r1, [r8, #4]
+ldr r1, [r5, #0x2d0]
+ldr r1, [r1, #8]
+str r1, [r8, #8]
+ldrsh r1, [r5, #0x58]
+str r1, [r8, #12]
+str r7, [r8, #0x10]
+ldr r1, [r4, #0x74]
+str r1, [r8, #0x14]
+ldr r1, [r4, #0x34]
+str r1, [r8, #0x18]
+ldr r1, [r4, #0x38]
+str r1, [r8, #0x1c]
+add r1, r8, #0x20
+mov r2, #18
+ldr r9, [r6, #0x2c]
+hit_copy_info:
+ldr r3, [r6], #4
+str r3, [r1], #4
+subs r2, r2, #1
+bne hit_copy_info
+mov r2, #6
+hit_copy_desc:
+cmp r9, #0
+ldrne r3, [r9], #4
+moveq r3, #0
+str r3, [r1], #4
+subs r2, r2, #1
+bne hit_copy_desc
+add r6, r5, #0x700
+add r6, r6, #0xb4
+mov r2, #18
+hit_copy_record:
+ldr r3, [r6], #4
+str r3, [r1], #4
+subs r2, r2, #1
+bne hit_copy_record
+add r1, r5, #0x368
+ldm r1, {r2,r3,r7}
+add r1, r8, #0xc8
+stm r1, {r2,r3,r7}
+ldr r2, [r5]
+str r2, [r8, #0xd4]
+ldr r9, [r5, #0x43c]
+ldr r2, [r9]
+str r2, [r8, #0xd8]
+ldr r2, [r9, #4]
+str r2, [r8, #0xdc]
+ldrb r2, [r9, #0x21]
+str r2, [r8, #0xe0]
+add r0, r0, #1
+str r0, [r8]
+str r0, [r4, #0x84]
+b hit_return
+hit_overflow:
+mov r0, #1
+str r0, [r4, #0x8c]
+hit_return:
+pop {r4-r10,pc}
+.ltorg

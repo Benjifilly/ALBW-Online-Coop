@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+*.tmp
+# Local games, saves, profiles and session data (never versioned)
+.local/
+artifacts/
+# Save backups made by the two-player test window
+backups/

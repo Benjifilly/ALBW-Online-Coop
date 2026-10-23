@@ -1,0 +1,22 @@
+@ Preserve the original build-hit call exactly once, then passively record its
+@ arguments/result. The following CMP still sees the real native return value.
+.syntax unified
+.arm
+push {r0-r12,lr}
+ldr r12, =0x34c8cc
+blx r12
+str r0, [sp]
+mrs r5, cpsr
+mov r2, r0
+mov r0, r4
+ldr r1, [sp, #8]
+ldr r3, =0x7afffc
+ldr r3, [r3]
+cmp r3, #0
+addne r12, r3, #0x1c00
+blxne r12
+msr cpsr_f, r5
+pop {r0-r12,lr}
+ldr lr, =0x4f85f4
+b 0x4f85f4
+.ltorg

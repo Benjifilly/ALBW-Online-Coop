@@ -1,0 +1,5 @@
+# Keep every file byte-for-byte (mixed LF/CRLF history; ARM sources and
+# built .bin files are checked by reproducibility tests).
+* -text
+*.bin binary
+*.png binary

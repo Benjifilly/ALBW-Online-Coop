@@ -1,0 +1,13 @@
+@ Tail route preserving the native arguments and LR. Pointer is owned locally.
+.syntax unified
+.arm
+push {r0-r3,r12,lr}
+ldr r12, =0x7afffc
+ldr r12, [r12]
+cmp r12, #0
+ldrne r12, [r12, #0x9c]
+cmpne r12, #0
+ldreq r12, =0x7afff0
+str r12, [sp, #20]
+pop {r0-r3,r12,pc}
+.ltorg

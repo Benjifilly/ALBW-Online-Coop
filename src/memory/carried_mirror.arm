@@ -1,0 +1,220 @@
+@ Present the private models of objects other players carry, and replay the
+@ native break of what they threw. Called once per frame by world_dispatch
+@ (world+0xB0 == this code), r0=world control.
+@ +0x700: 2 break requests, 0x30 each: +0 request (1 new, 2 restoring),
+@ +4 batch handle, +8 index, +C xyz where it broke, +18 placement pointer,
+@ +1C saved placement xyz, +28 frames before the placement is restored.
+@ The instance's native break then runs where the thrown object broke:
+@   pot   (removed, state 4): sound/lottery position +E8 and model matrix
+@         moved, native breaking state 1 (sound, shards);
+@   rock  (removed, state 4): placement and its hidden model moved, then
+@         its native break event (entry +30) and SE_Rock_BREAK/RockL there,
+@         as a thrown ObjRock does (4C2D50..4C2E2C). No state change: the
+@         lift mark (+C model) stays where the rock was lifted;
+@ Bush bursts are private particles queued by carried_props.py. Their native
+@ cut banks cache the stump's model matrix, not its placement; replaying that
+@ entry here would put the burst back at the stump.
+@ A moved placement is restored 3 frames later. +0x7F0 names a pot for
+@ shared_loot.arm, which skips that lottery: the thrower's shared loot
+@ already decided.
+@ +0x800: four lease-guarded private model descriptors (0x100 each), handed
+@ to the renderer's own present_private_model (692E08, r8=mailbox), which
+@ hides a disabled, expired or other-room descriptor.
+.syntax unified
+.arm
+push {r4-r11,lr}
+sub sp, sp, #4
+mov r4, r0
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne mirror_end
+add r5, r4, #0x62000
+add r5, r5, #0x700
+mov r6, #2
+mirror_break:
+ldr r0, [r5]
+cmp r0, #2
+beq mirror_restore
+cmp r0, #1
+bne mirror_break_next
+mov r0, #0
+str r0, [r5]
+@ Batch from its handle through the world's actor table.
+ldr r8, [r5, #4]
+ldr r1, [r4, #0x2c]
+ldr r2, [r4, #0x30]
+mov r0, r8, lsr #22
+add r1, r1, r0, lsl #2
+cmp r1, r2
+bhs mirror_break_next
+ldr r9, [r1]
+cmp r9, #0
+beq mirror_break_next
+ldr r0, [r9, #0x2cc]
+cmp r0, r8
+bne mirror_break_next
+mov r0, r9
+ldr r1, [r5, #8]
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq mirror_break_next
+mov r10, r0
+ldrh r0, [r1]
+str r0, [sp]
+ldr r11, [r1, #4]
+ldr r7, [r10, #8]
+cmp r7, #0x08000000
+blo mirror_break_next
+cmp r7, #0x1f000000
+bhs mirror_break_next
+ldr r0, =0x6eb390
+cmp r11, r0
+beq mirror_pot
+ldr r0, =0x6ec3b4
+cmp r11, r0
+beq mirror_rock
+b mirror_break_next
+mirror_rock:
+ldrb r0, [r10]
+cmp r0, #4
+bne mirror_break_next
+ldr r0, [r9, #0x610]
+ldr r1, [r5, #8]
+cmp r1, r0
+bhs mirror_break_next
+ldr r0, [r9, #0x618]
+ldr r11, [r0, r1, lsl #2]
+cmp r11, #0
+beq mirror_break_next
+bl mirror_move_placement
+cmp r0, #0
+beq mirror_break_next
+mov r0, r7
+bl mirror_move_model
+@ RockL (324, 326: the even kinds) has its own break sound.
+ldr r0, [sp]
+tst r0, #1
+ldreq r1, =0x6a27d4
+ldrne r1, =0x6a27b4
+ldr r0, =0x6f5988
+sub sp, sp, #8
+str r0, [sp]
+str r1, [sp, #4]
+mov r0, r9
+mov r1, sp
+add r2, r5, #12
+mov r3, #0
+ldr r12, =0x14dbf4
+blx r12
+add sp, sp, #8
+mov r0, r11
+ldr r1, [r0]
+ldr r12, [r1, #0x30]
+blx r12
+b mirror_break_next
+mirror_pot:
+ldrb r0, [r10]
+cmp r0, #4
+bne mirror_break_next
+bl mirror_suppress
+ldr r0, [r5, #12]
+str r0, [r10, #0xe8]
+ldr r0, [r5, #16]
+str r0, [r10, #0xec]
+ldr r0, [r5, #20]
+str r0, [r10, #0xf0]
+mov r0, r7
+bl mirror_move_model
+mov r0, #1
+strb r0, [r10]
+b mirror_break_next
+mirror_restore:
+ldr r0, [r5, #0x28]
+subs r0, r0, #1
+str r0, [r5, #0x28]
+bne mirror_break_next
+ldr r1, [r5, #0x18]
+add r0, r5, #0x1c
+ldm r0, {r2,r3,r12}
+add r1, r1, #4
+stm r1, {r2,r3,r12}
+mov r0, #0
+str r0, [r5]
+mirror_break_next:
+add r5, r5, #0x30
+subs r6, r6, #1
+bne mirror_break
+add r5, r4, #0x62000
+add r5, r5, #0x800
+mov r6, #4
+ldr r7, =0x57414c4c
+mirror_entry:
+ldr r0, [r5]
+cmp r0, r7
+bne mirror_next
+mov r0, r5
+ldr r8, =0x7afb00
+ldr r12, =0x692e08
+blx r12
+mirror_next:
+add r5, r5, #0x100
+subs r6, r6, #1
+bne mirror_entry
+mirror_end:
+add sp, sp, #4
+pop {r4-r11,pc}
+
+@ r5=request, r9=batch -> placement moved to the request xyz, its old xyz
+@ saved and a 3-frame restore armed (request 2); r0=0 without placement.
+mirror_move_placement:
+ldr r0, [r9, #0x480]
+ldr r1, [r5, #8]
+ldr r1, [r0, r1, lsl #2]
+cmp r1, #0x08000000
+movlo r0, #0
+bxlo lr
+str r1, [r5, #0x18]
+add r0, r1, #4
+ldm r0, {r2,r3,r12}
+add r0, r5, #0x1c
+stm r0, {r2,r3,r12}
+add r0, r5, #12
+ldm r0, {r2,r3,r12}
+add r0, r1, #4
+stm r0, {r2,r3,r12}
+mov r0, #3
+str r0, [r5, #0x28]
+mov r0, #2
+str r0, [r5]
+mov r0, #1
+bx lr
+
+@ r0=model, r5=request: matrix translation to the request xyz, bounds again.
+mirror_move_model:
+push {r4,lr}
+mov r4, r0
+ldr r0, [r5, #12]
+str r0, [r4, #0x8c]
+ldr r0, [r5, #16]
+str r0, [r4, #0x9c]
+ldr r0, [r5, #20]
+str r0, [r4, #0xac]
+ldr r0, [r4, #0x164]
+orr r0, r0, #0x40000000
+str r0, [r4, #0x164]
+mov r0, r4
+ldr r12, =0x4ceac8
+blx r12
+pop {r4,pc}
+
+@ r8=batch handle, r5=request: name this instance's lottery for shared_loot.
+mirror_suppress:
+add r0, r4, #0x62000
+add r0, r0, #0x7f0
+str r8, [r0]
+ldr r1, [r5, #8]
+str r1, [r0, #4]
+bx lr
+.ltorg

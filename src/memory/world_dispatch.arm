@@ -1,0 +1,281 @@
+@ Relocatable within an owned kernel reservation. r0=control; no packet
+@ selects an address. Local resolution supplies handle/address/array identity.
+.syntax unified
+.arm
+push {r4-r10,lr}
+mov r4, r0
+@ A replay marker lasts at most the current game update, even on refusal.
+mov r0, #0
+str r0, [r4, #0x94]
+ldr r0, [r4, #0x74]
+add r0, r0, #1
+str r0, [r4, #0x74]
+ldr r6, [r4, #8]
+ldr r0, [r4, #12]
+cmp r6, r0
+beq world_lease
+mov r0, #1
+str r0, [r4, #0x14]
+mov r7, #3
+bl 0x400
+cmp r0, #0
+beq world_ack
+ldr r5, [r4, #0x4c]
+ldr r0, [r4, #0x40]
+ldr r1, [r4, #0x2c]
+ldr r2, [r4, #0x30]
+mov r3, r0, lsr #22
+add r1, r1, r3, lsl #2
+cmp r1, r2
+bhs world_ack
+ldr r1, [r1]
+cmp r1, r5
+bne world_ack
+ldr r1, [r5, #0x2cc]
+cmp r1, r0
+bne world_ack
+ldrb r0, [r5, #0x2d7]
+cmp r0, #0
+bne world_ack
+@ Whole-actor props (state machines) are resolved before Mass batches.
+mov r0, r5
+add r12, r4, #0x2400
+blx r12
+cmp r0, #0
+bne world_prop
+@ Shared identity (world_mass): family, bounds, placement and record. The
+@ submitted records must still be the live array of that family.
+ldr r8, [r4, #0x44]
+mov r0, r5
+mov r1, r8
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq world_ack
+mov r9, r0
+ldrh r2, [r1, #10]
+ldr r0, [r5, r2]
+ldr r2, [r4, #0x50]
+cmp r0, r2
+bne world_ack
+ldr r1, [r1, #4]
+ldr r2, =0x6d7c50
+cmp r1, r2
+beq world_shrub
+ldr r2, =0x6eb390
+cmp r1, r2
+beq world_pot
+ldr r2, =0x6ec3b4
+cmp r1, r2
+beq world_rock
+ldr r2, =0x6ee60c
+cmp r1, r2
+ldrne r2, =0x6ec2d8
+cmpne r1, r2
+bne world_ack
+@ Grass/lawn: the timeline and record fields 237288 consumes.
+ldr r0, [r5, #0x610]
+cmp r8, r0
+bhs world_ack
+ldr r0, [r5, #0x618]
+ldr r0, [r0, r8, lsl #2]
+cmp r0, #0
+beq world_ack
+ldr r0, [r9, #8]
+cmp r0, #0
+beq world_ack
+ldrb r0, [r9]
+mov r7, #2
+cmp r0, #5
+cmpne r0, #2
+beq world_ack
+mov r7, #3
+ldr r2, [r4, #0x48]
+cmp r2, #5
+beq world_restore
+cmp r2, #4
+bhi world_ack
+mov r0, #1
+str r0, [r4, #0x64]
+mov r0, r5
+mov r1, r8
+ldr r12, =0x237288
+blx r12
+mov r0, #0
+str r0, [r4, #0x64]
+mov r7, #1
+b world_ack
+world_restore:
+ldr r0, =0x7aff78
+ldr r0, [r0]
+cmp r0, #0
+beq world_ack
+add r12, r0, #0x1000
+add r12, r12, #12
+mov r0, r5
+blx r12
+ldrb r0, [r9]
+cmp r0, #5
+moveq r7, #1
+b world_ack
+@ MassShrubLight: the transition 238DD4/2395CC write for an intact shrub.
+@ Effect 0 silent cut, 1 SE_Shrub_BREAK, 2 SE_Shrub_CUT, 3 burn (state6).
+@ Native state2/6 handlers then run the models, debris and final state8.
+world_shrub:
+ldrb r0, [r9]
+mov r7, #2
+cmp r0, #0
+bne world_ack
+mov r7, #3
+ldr r2, [r4, #0x48]
+cmp r2, #5
+moveq r2, #0
+cmp r2, #3
+bhi world_ack
+mov r0, #0
+strb r0, [r9, #0xd5]
+cmp r2, #3
+moveq r0, #6
+movne r0, #2
+strb r0, [r9]
+mov r7, #1
+cmp r2, #1
+ldreq r1, =0x2399b4
+beq world_shrub_sound
+cmp r2, #2
+bne world_ack
+ldr r1, =0x2399a4
+world_shrub_sound:
+mov r0, #1
+str r0, [r4, #0x64]
+ldr r0, =0x6f5988
+push {r0, r1}
+mov r1, sp
+mov r0, r5
+add r2, r9, #0x1c
+mov r3, #0
+ldr r12, =0x14dbf4
+blx r12
+add sp, sp, #8
+mov r0, #0
+str r0, [r4, #0x64]
+b world_ack
+@ MassPotLight (update 4BA694): effect 1 enters the native breaking state 1
+@ (sound, shards, lottery reconciled by the shared loot); 0/2/5 enter state 2,
+@ which only hides the pot and retires its collider (silent restore, or a pot
+@ lifted in the other game: it now lives there as a carried actor). Then 4.
+world_pot:
+ldrb r0, [r9]
+mov r7, #2
+cmp r0, #0
+cmpne r0, #3
+bne world_ack
+mov r7, #3
+ldr r2, [r4, #0x48]
+cmp r2, #5
+moveq r2, #0
+cmp r2, #2
+bhi world_ack
+cmp r2, #1
+moveq r0, #1
+movne r0, #2
+strb r0, [r9]
+mov r7, #1
+b world_ack
+@ MassRock (update 4D5FAC): effect 2 enters the native breaking state 2;
+@ 0/3/5 enter the removal state 3 (4D57E8 hides it and its colliders, as
+@ when it is lifted). Intact 0 or wobbling 1 only.
+world_rock:
+ldrb r0, [r9]
+mov r7, #2
+cmp r0, #0
+cmpne r0, #1
+bne world_ack
+mov r7, #3
+ldr r2, [r4, #0x48]
+cmp r2, #5
+moveq r2, #0
+cmp r2, #3
+bhi world_ack
+cmp r2, #2
+moveq r0, #2
+movne r0, #3
+strb r0, [r9]
+mov r7, #1
+b world_ack
+@ Actor prop: effect = from<<4 | to. Apply the native changeState only when
+@ this copy is still in `from` (0 = idle, set by init 1C42E0); 2 when already
+@ there or past it, 3 (retry) before init (negative) or during a global event.
+world_prop:
+mov r9, r1
+ldr r2, [r4, #0x48]
+cmp r2, #0xff
+bhi world_ack
+and r8, r2, #15
+mov r3, r2, lsr #4
+ldr r0, [r9, #8]
+mov r1, #1
+tst r0, r1, lsl r8
+beq world_ack
+ldrh r0, [r9, #2]
+add r10, r5, r0
+ldrsb r0, [r10, #4]
+cmp r0, #0
+blt world_ack
+and r0, r0, #15
+cmp r0, r3
+movne r7, #2
+bne world_ack
+ldr r0, =0x70b728
+ldr r0, [r0]
+cmp r0, #0
+beq world_prop_apply
+ldr r0, [r0, #0x44]
+cmp r0, #0
+bne world_ack
+world_prop_apply:
+mov r0, #1
+str r0, [r4, #0x64]
+@ A machine: changeState(machine, to). A reaction prop (mask bit 31): its
+@ own routine(actor, 1), which reaches `to` from the same `from`.
+ldr r1, [r9, #8]
+tst r1, #0x80000000
+moveq r0, r10
+moveq r1, r8
+movne r0, r5
+movne r1, #1
+ldr r12, [r9, #12]
+blx r12
+mov r0, #0
+str r0, [r4, #0x64]
+mov r7, #1
+world_ack:
+str r7, [r4, #0x10]
+mov r0, #0
+str r0, [r4, #0x14]
+str r6, [r4, #12]
+world_lease:
+@ Carried-object mirror (carried_mirror.arm), once per frame when installed.
+ldr r0, [r4, #0xb0]
+add r1, r4, #0x62000
+cmp r0, r1
+moveq r0, r4
+blxeq r1
+@ Private held tools and bomb models, with their own identity/lease checks.
+ldr r0, [r4, #0xb4]
+add r1, r4, #0x66000
+cmp r0, r1
+moveq r0, r4
+blxeq r1
+@ Scene lighting of every shown private model (model_light.arm).
+ldr r0, [r4, #0xb8]
+add r1, r4, #0x6a000
+cmp r0, r1
+moveq r0, r4
+blxeq r1
+ldr r0, [r4, #0x3c]
+cmp r0, #0
+subne r0, r0, #1
+strne r0, [r4, #0x3c]
+pop {r4-r10,pc}
+.ltorg

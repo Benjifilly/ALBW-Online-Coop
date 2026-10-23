@@ -1,0 +1,150 @@
+@ Private painting presentation. Control block is created locally, never from
+@ a network address. Every native pointer belongs to its separate render heap.
+.syntax unified
+.arm
+.fpu vfpv2
+ldr r0, [r8, #0x158]
+b present_private_model
+@ Shared entry at 692E08: r0 is a locally allocated, lease-guarded descriptor.
+present_private_model:
+push {r4-r10,lr}
+mov r4, r0
+cmp r4, #0
+beq wall_absent
+ldr r0, [r4]
+ldr r1, =0x57414c4c
+cmp r0, r1
+bne wall_absent
+ldr r5, [r4, #0xc]
+cmp r5, #0
+beq wall_absent
+ldr r0, [r8, #0x14]
+cmp r0, #4
+beq wall_hide
+ldr r0, =0x709df8
+ldr r0, [r0]
+ldrb r1, [r0, #0x18]
+ldr r2, [r4, #0xa4]
+cmp r1, r2
+bne wall_hide
+ldr r1, [r0, #0x1c]
+ldr r2, [r4, #0xa8]
+cmp r1, r2
+@ The same live camera-state boundary applies to weapons and wall paintings.
+@ Owner-state4 and course mismatch still reject before any old object is used.
+ldrne r0, [r8, #0x18]
+ldrne r0, [r0, #0x614]
+ldrhne r0, [r0, #0x42]
+cmpne r0, #0x5f
+bne wall_hide
+@ Descriptor mode 0 is held equipment. The body and both weapons must obey
+@ the same wall state even while Python waits for a valid projected surface.
+ldr r0, [r4, #0xa0]
+cmp r0, #0
+bne wall_check_enabled
+ldr r0, [r8, #0x168]
+ldr r1, [r0]
+ldr r2, =0x31444e52
+cmp r1, r2
+ldreq r0, [r0, #0x1c]
+cmpeq r0, #1
+beq wall_hide
+wall_check_enabled:
+ldr r0, [r4, #8]
+cmp r0, #0
+beq wall_hide
+@ An expired lease (0) borrows: hide without storing.
+ldr r0, [r4, #4]
+subs r0, r0, #1
+bcc wall_hide
+str r0, [r4, #4]
+add r0, r4, #0x24
+add r1, r5, #0x80
+vldmia r0, {s0-s11}
+vstmia r1, {s0-s11}
+add r0, r4, #0x54
+add r1, r5, #0x74
+ldm r0, {r2,r3,r6}
+stm r1, {r2,r3,r6}
+ldr r0, [r5, #0x164]
+orr r0, r0, #0x40000000
+str r0, [r5, #0x164]
+@ +134 selects an extra renderer-space rotation; it is not an alpha value.
+@ Native FlatLink keeps it zero. The shared equipment entry keeps its
+@ previously verified transform behavior (descriptor mode 0).
+@ Mode 1 (items, projectiles) carries the source G3D's own lean at +BC: a
+@ native bomb uses 1.0 and leans toward the camera; held tools keep 0.
+ldr r0, [r4, #0xa0]
+cmp r0, #1
+ldreq r0, [r4, #0xbc]
+movhi r0, #0
+ldrlo r0, =0x3f800000
+str r0, [r5, #0x134]
+ldr r0, [r4, #0x1c]
+ldr r2, [r4, #0x20]
+ldr r1, [r2]
+cmp r0, r1
+movne r9, #1
+moveq r9, #0
+str r0, [r2]
+add r7, r4, #0x10
+add r8, r4, #0x60
+mov r6, #3
+wall_animation:
+ldr r10, [r7], #4
+cmp r10, #0
+beq wall_next
+cmp r9, #0
+beq wall_advance
+ldr r0, [r8]
+cmn r0, #1
+beq wall_advance
+mov r0, r10
+mov r1, r8
+mov r2, r5
+bl 0x00692ac4
+b wall_next
+wall_advance:
+mov r0, r10
+bl 0x00169a80
+mov r0, r10
+mov r1, r5
+mov r2, #0
+bl 0x00168e9c
+wall_next:
+add r8, r8, #20
+subs r6, r6, #1
+bne wall_animation
+mov r0, r5
+bl 0x004ceac8
+@ Colour bindings are private local material fields, applied after the native
+@ material animation so a later frame cannot silently restore the green atlas.
+ldr r6, [r4, #0xac]
+cmp r6, #0
+beq wall_register
+ldr r7, [r6], #4
+cmp r7, #96
+bhi wall_register
+cmp r7, #0
+beq wall_register
+wall_palette:
+ldm r6!, {r0,r1}
+str r1, [r0]
+subs r7, r7, #1
+bne wall_palette
+wall_register:
+mov r0, r4
+mov r1, #1
+bl 0x006926e0
+mov r0, #1
+pop {r4-r10,pc}
+wall_hide:
+mov r0, r4
+mov r1, #0
+bl 0x006926e0
+mov r0, #0
+str r0, [r5, #0x134]
+wall_absent:
+mov r0, #0
+pop {r4-r10,pc}
+.ltorg

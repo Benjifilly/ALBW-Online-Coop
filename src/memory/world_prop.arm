@@ -1,0 +1,47 @@
+@ Shared actor-prop identity: r0=actor, r4=world control.
+@ Returns r0=actor (or 0) and r1=matching prop row (or 0). Pure reads;
+@ preserves r4-r11. The table is generated from ACTOR_PROPS in
+@ src/mass_families.py: type u16, machine offset u16, vtable u32, state mask
+@ u32, changeState u32; a zero type ends the table.
+.syntax unified
+.arm
+push {r5,r7,lr}
+mov r5, r0
+mov r0, #0
+mov r1, #0
+ldr r2, [r5, #0x2cc]
+ldr r3, [r4, #0x2c]
+mov r2, r2, lsr #22
+add r3, r3, r2, lsl #2
+ldr r2, [r4, #0x30]
+cmp r3, r2
+bhs prop_none
+ldr r3, [r3]
+cmp r3, r5
+bne prop_none
+ldrb r2, [r5, #0x2d7]
+cmp r2, #0
+bne prop_none
+ldr r2, [r5, #0x2d0]
+ldr r2, [r2, #8]
+ldr r3, [r5]
+adr r7, prop_table
+prop_scan:
+ldrh r12, [r7]
+cmp r12, #0
+beq prop_none
+cmp r12, r2
+bne prop_next
+ldr r12, [r7, #4]
+cmp r12, r3
+moveq r0, r5
+moveq r1, r7
+beq prop_none
+prop_next:
+add r7, r7, #16
+b prop_scan
+prop_none:
+pop {r5,r7,pc}
+.balign 4
+prop_table:
+PROP_TABLE

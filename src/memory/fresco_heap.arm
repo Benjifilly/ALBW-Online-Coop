@@ -1,0 +1,37 @@
+@ FrescoBase's constructor normally chooses a global graphics heap. Override
+@ only our acknowledged, private CREATE_MODEL job, never that global pointer.
+.syntax unified
+.arm
+push {r0-r3,r12,lr}
+ldr r0, =0x7afc10
+ldr r1, [r0]
+ldr r2, =0x4a4f4231
+cmp r1, r2
+bne fresco_heap_return
+ldr r1, [r0, #0x44]
+cmp r1, #1
+bne fresco_heap_return
+ldr r1, [r0, #0xc]
+cmp r1, #6
+bne fresco_heap_return
+ldr r1, [r0, #4]
+ldr r2, [r0, #8]
+cmp r1, r2
+beq fresco_heap_return
+ldr r1, [r0, #0x10]
+cmp r1, #0x14000000
+blo fresco_heap_return
+cmp r1, #0x1c000000
+bhs fresco_heap_return
+ldr r2, [r7, #4]
+cmp r1, r2
+bne fresco_heap_return
+ldr r2, [r1]
+ldr r3, =0x6f7584
+cmp r2, r3
+moveq r10, r1
+fresco_heap_return:
+pop {r0-r3,r12,lr}
+cmp r10, #0
+b 0x2c17f4
+.ltorg

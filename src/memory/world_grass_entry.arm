@@ -1,0 +1,16 @@
+@ Passive entry capture. Preserve all integer registers and flags; the recorder
+@ uses no VFP and cannot call gameplay. Replay exactly the displaced prologue.
+.syntax unified
+.arm
+push {r0-r12,lr}
+mrs r4, cpsr
+ldr r3, =0x7afffc
+ldr r3, [r3]
+cmp r3, #0
+addne r12, r3, #0x1600
+blxne r12
+msr cpsr_f, r4
+pop {r0-r12,lr}
+push {r4-r11,lr}
+b 0x23728c
+.ltorg

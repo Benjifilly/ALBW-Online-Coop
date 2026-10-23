@@ -1,0 +1,162 @@
+@ Companion rustle for MassShrubLight, after the native local-player contact.
+@ Hook 238F28 in the intact-shrub contact 238DD4: r4=record, r5=attack code,
+@ r7=placement+4. Caller 2395CC saved r4/r5=index, r6=batch, r8=records.
+@ Start only the native rustle fields written by 238DD4 itself (angle 64,
+@ direction 70, cooldown 88, active D5). No cut state, collision, loot,
+@ player, timer of another instance or second update.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r0-r12,lr}
+mrs r0, cpsr
+vmrs r1, fpscr
+push {r0,r1}
+vpush {d0-d15}
+ldr r0, =0x7afffc
+ldr r4, [r0]
+cmp r4, #0x14000000
+blo shrub_finish
+cmp r4, #0x1c000000
+bhs shrub_finish
+tst r4, #3
+bne shrub_finish
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne shrub_finish
+ldr r0, [r4, #0x18]
+ldr r1, [r0, #0x614]
+cmp r1, #0x08000000
+blo shrub_finish
+cmp r1, #0x1f000000
+bhs shrub_finish
+ldrh r1, [r1, #0x42]
+cmp r1, #95
+beq shrub_finish
+@ Caller frame: 0xC0 saved here, 0x64 locals, d8, then r4..r8 of 2395CC.
+ldr r5, [sp, #0x134]
+ldr r6, [sp, #0x12c]
+ldr r0, [sp, #0x130]
+cmp r6, r0
+bne shrub_finish
+@ Shared identity (world_mass): batch, family, bounds, placement, record.
+mov r0, r5
+mov r1, r6
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq shrub_finish
+ldrh r2, [r1]
+ldr r3, =321
+cmp r2, r3
+bne shrub_finish
+@ The record must be the native r4 and come from the native records r8.
+mov r7, r0
+ldr r1, [sp, #152]
+cmp r7, r1
+bne shrub_finish
+ldr r0, [r5, #0x630]
+ldr r1, [sp, #0x13c]
+cmp r0, r1
+bne shrub_finish
+ldrb r0, [r7]
+cmp r0, #0
+bne shrub_finish
+ldrb r0, [r7, #0xd5]
+cmp r0, #0
+bne shrub_finish
+ldr r0, [r7, #0x88]
+cmp r0, #0
+bne shrub_finish
+ldrh r0, [r7, #0x98]
+cmp r0, #0
+bne shrub_finish
+ldr r0, [r5, #0x480]
+ldr r8, [r0, r6, lsl #2]
+add r8, r8, #4
+ldr r0, [sp, #164]
+cmp r8, r0
+bne shrub_finish
+@ Same companion buffer as the grass response.
+ldr r9, [r4, #0xa8]
+add r0, r4, #0x59000
+cmp r9, r0
+addne r0, r0, #0x100
+cmpne r9, r0
+bne shrub_finish
+ldr r10, [r9]
+tst r10, #1
+bne shrub_finish
+ldr r0, [r4, #0x74]
+ldr r1, [r9, #4]
+sub r0, r0, r1
+cmp r0, #12
+bhi shrub_finish
+ldr r11, [r9, #8]
+cmp r11, #3
+bhi shrub_finish
+cmp r11, #0
+beq shrub_finish
+vldr s12, shrub_radius_squared
+vldr s13, shrub_height
+add r6, r9, #16
+shrub_peer:
+vldr s0, [r6]
+vldr s1, [r6, #4]
+vldr s2, [r6, #8]
+vldr s3, [r8]
+vldr s4, [r8, #4]
+vldr s5, [r8, #8]
+vsub.f32 s6, s0, s3
+vsub.f32 s7, s1, s4
+vsub.f32 s8, s2, s5
+vabs.f32 s1, s7
+vcmp.f32 s1, s13
+vmrs apsr_nzcv, fpscr
+bhi shrub_next
+bvs shrub_next
+vmul.f32 s0, s6, s6
+vmla.f32 s0, s8, s8
+vcmp.f32 s0, s12
+vmrs apsr_nzcv, fpscr
+bhi shrub_next
+bvs shrub_next
+ldr r0, [r9]
+cmp r0, r10
+bne shrub_finish
+@ Direction companion-shrub with the native angle routine, as 238E98 does
+@ for the local player.
+sub sp, sp, #16
+vstr s6, [sp]
+vstr s7, [sp, #4]
+vstr s8, [sp, #8]
+mov r0, sp
+ldr r12, =0x68c668
+blx r12
+add sp, sp, #16
+str r0, [r7, #0x70]
+ldr r0, =0xf6c16c17
+str r0, [r7, #0x64]
+mov r0, #0x14
+str r0, [r7, #0x88]
+mov r0, #1
+strb r0, [r7, #0xd5]
+b shrub_finish
+shrub_next:
+add r6, r6, #16
+subs r11, r11, #1
+bne shrub_peer
+shrub_finish:
+vpop {d0-d15}
+pop {r0,r1}
+vmsr fpscr, r1
+msr cpsr_fs, r0
+pop {r0-r12,lr}
+ldrsb r0, [r5]
+ldr pc, =0x238f2c
+.balign 4
+@ A shrub blocks the other Link at about one tile from its centre: the
+@ native contact happens there, not when merely passing nearby.
+shrub_radius_squared: .float 1.0
+shrub_height: .float 1.0
+.ltorg

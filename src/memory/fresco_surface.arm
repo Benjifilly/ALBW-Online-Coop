@@ -1,0 +1,58 @@
+@ Closed job: bind an inactive private Fresco slot and matrices on game thread.
+@ r0=Fresco, r1=local staging {slot,count,world[12],projection[12]}.
+.syntax unified
+.arm
+.fpu vfpv2
+push {r4-r8,lr}
+mov r4, r0
+mov r5, r1
+ldr r2, [r4]
+ldr r3, =0x6dbb00
+cmp r2, r3
+bne fresco_surface_refuse
+ldr r6, [r5]
+cmp r6, #1
+bhi fresco_surface_refuse
+ldr r2, [r4, #0x1cc]
+cmp r6, r2
+beq fresco_surface_refuse
+ldr r2, [r5, #4]
+cmp r2, #1
+blo fresco_surface_refuse
+cmp r2, #90
+bhi fresco_surface_refuse
+add r0, r6, r6, lsl #2
+add r0, r4, r0, lsl #3
+add r0, r0, #0x17c
+ldr r1, [r4, #0x178]
+bl 0x2c16fc
+str r6, [r4, #0x1cc]
+add r0, r5, #8
+add r1, r4, #0x80
+mov r2, #12
+fresco_world_copy:
+ldr r3, [r0], #4
+str r3, [r1], #4
+subs r2, r2, #1
+bne fresco_world_copy
+add r1, r4, #0x1f0
+mov r2, #12
+fresco_projection_copy:
+ldr r3, [r0], #4
+str r3, [r1], #4
+subs r2, r2, #1
+bne fresco_projection_copy
+ldr r0, [r4, #0x164]
+orr r0, r0, #0x40000000
+str r0, [r4, #0x164]
+mov r0, r4
+bl 0x4ceac8
+fresco_surface_done:
+mov r0, r5
+bl 0x6927e0
+mov r0, #1
+pop {r4-r8,pc}
+fresco_surface_refuse:
+mov r0, #0
+pop {r4-r8,pc}
+.ltorg

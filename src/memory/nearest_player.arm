@@ -1,0 +1,109 @@
+@ Replaces 520F98 (the player's position pointer, player+3D0). Every caller
+@ keeps Link's position, except an enemy of the combat catalogue asking from
+@ its own code (r4 = the enemy): it gets the nearest of Link and the visible
+@ companion (renderer mailbox +24, presented xyz), so enemy AI sees both
+@ players: crows dive and bees chase whoever is nearer, ground enemies
+@ surface for either. All 652 callers only read x/y/z (+0/+4/+8) from it.
+@ Preserves every register except r0, the flags and FPSCR.
+@ The builder substitutes the catalogue vtables below (0-terminated words).
+.syntax unified
+.arm
+.fpu vfpv2
+push {r1-r3,r12,lr}
+mrs r1, cpsr
+vmrs r2, fpscr
+push {r1,r2}
+vpush {d0-d3}
+ldr r0, =0x70fb60
+ldr r0, [r0]
+ldr r0, [r0, #0x1c]
+mov lr, r0
+@ The companion is presented (enabled, visible) in this very room.
+ldr r1, =0x7afb00
+ldr r2, [r1]
+ldr r3, =0x434f4f50
+cmp r2, r3
+bne nearest_done
+ldr r2, [r1, #8]
+cmp r2, #1
+bne nearest_done
+ldr r2, [r1, #0x14]
+cmp r2, #1
+bne nearest_done
+ldr r2, =0x709df8
+ldr r2, [r2]
+cmp r2, #0
+beq nearest_done
+ldrb r3, [r2, #0x18]
+ldr r12, [r1, #0x1c]
+cmp r3, r12
+bne nearest_done
+ldr r3, [r2, #0x1c]
+ldr r12, [r1, #0x20]
+cmp r3, r12
+bne nearest_done
+@ A painted (wall) companion is not a target.
+ldr r2, [r1, #0x168]
+ldr r3, =0x7afb80
+cmp r2, r3
+addne r3, r1, #0x16c
+cmpne r2, r3
+bne nearest_done
+ldr r3, [r2]
+ldr r12, =0x31444e52
+cmp r3, r12
+ldreq r3, [r2, #0x1c]
+cmpeq r3, #1
+beq nearest_done
+@ The asking object is a catalogue enemy.
+cmp r4, #0x08000000
+blo nearest_done
+cmp r4, #0x1f000000
+bhs nearest_done
+tst r4, #3
+bne nearest_done
+ldr r2, [r4]
+adr r3, enemy_vtables
+nearest_vtable:
+ldr r12, [r3], #4
+cmp r12, #0
+beq nearest_done
+cmp r12, r2
+bne nearest_vtable
+@ Squared distances from the enemy to Link and to the companion.
+add r2, r4, #0x3d0
+vldmia r2, {s0-s2}
+vldmia r0, {s3-s5}
+vsub.f32 s3, s3, s0
+vsub.f32 s4, s4, s1
+vsub.f32 s5, s5, s2
+vmul.f32 s6, s3, s3
+vmla.f32 s6, s4, s4
+vmla.f32 s6, s5, s5
+add r2, r1, #0x24
+vldmia r2, {s3-s5}
+vsub.f32 s3, s3, s0
+vsub.f32 s4, s4, s1
+vsub.f32 s5, s5, s2
+vmul.f32 s7, s3, s3
+vmla.f32 s7, s4, s4
+vmla.f32 s7, s5, s5
+@ Keep Link unless the companion is clearly nearer (no flip-flop when equal).
+vldr s3, nearest_bias
+vmul.f32 s6, s6, s3
+vcmp.f32 s7, s6
+vmrs apsr_nzcv, fpscr
+movlo lr, r2
+nearest_done:
+mov r0, lr
+vpop {d0-d3}
+pop {r1,r2}
+vmsr fpscr, r2
+msr cpsr_f, r1
+pop {r1-r3,r12,lr}
+bx lr
+.balign 4
+nearest_bias: .float 0.81
+enemy_vtables:
+ENEMY_VTABLES
+.ltorg

@@ -1,0 +1,95 @@
+@ Bind a carried actor to the Mass instance it was lifted from. Hook "movs
+@ DEST, r0" right after the lift's spawn 4C4ACC (r0=new actor or 0); the
+@ native index is at saved-frame offset INDEX. The lift capture has just
+@ recorded the instance (batch handle, index, effect LIFT) as the newest ring
+@ event. When it matches a batch of vtable VTABLE_A/VTABLE_B, store (actor
+@ handle, batch handle, index, serial) in the carried table at world+0x61F00
+@ (counter, then 8 x 16-byte entries). Readers: the shared loot (a thrown
+@ pot's lottery keeps the pot's identity) and the carried-object mirror.
+@ Sites: capture_hooks.CARRY_SITES; the builder substitutes the names above.
+.syntax unified
+.arm
+push {r0-r12,lr}
+mrs r0, cpsr
+push {r0}
+ldr r0, =0x7afffc
+ldr r4, [r0]
+cmp r4, #0x14000000
+blo carry_return
+cmp r4, #0x1c000000
+bhs carry_return
+tst r4, #3
+bne carry_return
+add r12, r4, #0x1400
+blx r12
+cmp r0, #1
+bne carry_return
+@ Saved registers: r0 +0x04 ... r11 +0x30.
+ldr r7, [sp, #0x04]
+cmp r7, #0
+beq carry_return
+ldr r0, [r4, #0x58]
+cmp r0, #0
+beq carry_return
+sub r1, r0, #1
+and r1, r1, #63
+add r3, r4, #0x100
+add r3, r3, r1, lsl #5
+ldr r1, [r3]
+cmp r1, r0
+bne carry_return
+ldr r1, [r3, #12]
+cmp r1, #LIFT
+bne carry_return
+ldr r6, [sp, #INDEX]
+ldr r1, [r3, #8]
+cmp r1, r6
+bne carry_return
+ldr r8, [r3, #4]
+@ Batch from its handle through the world's actor table.
+ldr r1, [r4, #0x2c]
+ldr r2, [r4, #0x30]
+mov r0, r8, lsr #22
+add r1, r1, r0, lsl #2
+cmp r1, r2
+bhs carry_return
+ldr r5, [r1]
+cmp r5, #0
+beq carry_return
+ldr r0, [r5, #0x2cc]
+cmp r0, r8
+bne carry_return
+@ Shared identity (world_mass) of a family this site lifts.
+mov r0, r5
+mov r1, r6
+add r12, r4, #0x2000
+blx r12
+cmp r0, #0
+beq carry_return
+ldr r2, [r1, #4]
+ldr r3, =VTABLE_A
+cmp r2, r3
+ldrne r3, =VTABLE_B
+cmpne r2, r3
+bne carry_return
+add r3, r4, #0x61000
+add r3, r3, #0xf00
+ldr r0, [r3]
+add r1, r0, #1
+str r1, [r3]
+and r0, r0, #7
+add r3, r3, #0x10
+add r3, r3, r0, lsl #4
+ldr r0, [r7, #0x2cc]
+str r0, [r3]
+str r8, [r3, #4]
+str r6, [r3, #8]
+ldr r0, [r4, #0x58]
+str r0, [r3, #12]
+carry_return:
+pop {r0}
+msr cpsr_f, r0
+pop {r0-r12,lr}
+movs DEST, r0
+ldr pc, =RETURN
+.ltorg
