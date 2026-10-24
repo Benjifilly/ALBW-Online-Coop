@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import threading
@@ -10,26 +11,51 @@ from src.online_saves import archive_for,export_progress,decode_progress
 ROOT=Path(__file__).resolve().parents[1]
 
 
+def _command_line(pid):
+    import win32com.client
+    rows=win32com.client.GetObject('winmgmts:').ExecQuery(f'SELECT CommandLine FROM Win32_Process WHERE ProcessId={int(pid)}')
+    return next((str(row.CommandLine or '') for row in rows),'')
+
+
+def running_game(pid):
+    """Le jeu passé en argument à cet Azahar ('' s'il a été ouvert depuis son menu)."""
+    import pythoncom
+    pythoncom.CoInitialize()
+    # Les objets COM sont libérés au retour, avant CoUninitialize.
+    try:line=_command_line(pid)
+    finally:pythoncom.CoUninitialize()
+    try:words=[w.strip('"') for w in shlex.split(line,posix=False)]
+    except ValueError:return ''
+    return next((w for w in reversed(words[1:]) if Path(w).suffix.lower() in ('.3ds','.cci','.cxi','.app') and Path(w).is_file()),'')
+
+
 class OnlineProgress:
     def __init__(self,controller,profile,pid):
         self.controller=controller;self.profile=profile;self.pid=pid;self.offered=None;self.launch_args=[]
         self.auto=False;self.error=''
         controller.net.save_transfer.provider=self.export
 
-    def context(self):
-        from src.local_session import discover_paths,identify_game
+    def emulator(self):
         from src.overlay.window_tracker import _process_path
-        emulator,game=discover_paths()
-        pid=self.pid
-        if not pid:raise ValueError('Ouvrez le mod avec run_coop.bat pour associer l’import au bon Azahar.')
-        actual=_process_path(pid) if pid else ''
+        if not self.pid:raise ValueError('Ouvrez le mod avec run_coop.bat pour associer l’import au bon Azahar.')
+        actual=_process_path(self.pid)
         if not actual:raise ValueError('Votre Azahar a été fermé. Relancez le mod avant cet import.')
         if Path(actual).name.lower() not in ('azahar.exe','azahar-qt.exe'):raise ValueError('Le processus Azahar a changé ; relancez le mod.')
-        emulator=actual
-        info=identify_game(game)
+        return str(Path(actual).resolve())
+
+    def context(self):
+        """Ce qu'il faut pour rouvrir ce jeu après l'import (côté client)."""
+        from src.local_session import discover_paths,identify_game
+        emulator=self.emulator()
+        # Le jeu réellement ouvert ; les choix du lanceur seulement à défaut.
+        try:game=running_game(self.pid)
+        except Exception:game=''
+        game=game or discover_paths()[1]
+        if not game:raise ValueError('Jeu ALBW introuvable : choisissez-le dans « Choisir Azahar et le jeu » de run_coop.bat.')
+        try:info=identify_game(game)
+        except OSError:raise ValueError('Le fichier du jeu ALBW est illisible ; choisissez-le à nouveau dans run_coop.bat.') from None
         if info.title_id!=0x00040000000EC400:raise ValueError('L’import de progression nécessite ALBW EUR.')
-        if not emulator or not Path(emulator).is_file():raise ValueError('L’installation Azahar de ce joueur est introuvable.')
-        return dict(emulator=str(Path(emulator).resolve()),game=str(info.path),archive=str(archive_for(emulator)),pid=pid)
+        return dict(emulator=emulator,game=str(info.path),archive=str(archive_for(emulator)),pid=self.pid)
 
     def export(self):
         o=self.controller
@@ -39,7 +65,8 @@ class OnlineProgress:
             manager=o.bridge.read_u32(0x711DE8)
             if not manager or not 0x08000000<=manager<0x1F000000:raise ValueError('La partie de l’hôte n’est pas prête.')
             slot=o.bridge.read_u32(manager+0x9BC)
-            result=export_progress(self.context()['archive'],slot)
+            # L'hôte n'envoie que son fichier : il n'a pas besoin de connaître son jeu.
+            result=export_progress(archive_for(self.emulator()),slot)
             if o.bridge.read_u32(manager+0x9BC)!=slot:raise ValueError('L’hôte a changé de fichier pendant le transfert.')
             return result
 

@@ -17,21 +17,26 @@ class RestartPending(RuntimeError):
         self.backup=backup
 
 
-def archive_in_use(archive):
+def _azahar_pids():
     import win32com.client
+    rows=win32com.client.GetObject('winmgmts:').ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='azahar.exe' OR Name='azahar-qt.exe'")
+    return [int(row.ProcessId) for row in rows]
+
+
+def archive_in_use(archive):
     import pythoncom
     from src.overlay.window_tracker import _process_path
     pythoncom.CoInitialize()
-    try:
-        wmi=win32com.client.GetObject('winmgmts:')
-        for process in wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE Name='azahar.exe' OR Name='azahar-qt.exe'"):
-            executable=_process_path(int(process.ProcessId))
-            if not executable:raise RuntimeError('Impossible de vérifier un Azahar ouvert. Fermez-le avant cet import.')
-            try:
-                if archive_for(executable)==Path(archive).resolve():return True
-            except (OSError,ValueError):continue
-        return False
+    # Les objets COM sont libérés au retour, avant CoUninitialize.
+    try:pids=_azahar_pids()
     finally:pythoncom.CoUninitialize()
+    for pid in pids:
+        executable=_process_path(pid)
+        if not executable:raise RuntimeError('Impossible de vérifier un Azahar ouvert. Fermez-le avant cet import.')
+        try:
+            if archive_for(executable)==Path(archive).resolve():return True
+        except (OSError,ValueError):continue
+    return False
 
 
 def close_game(ticket):
@@ -44,7 +49,7 @@ def close_game(ticket):
         if win32process.GetWindowThreadProcessId(hwnd)[1]==pid and win32gui.IsWindowVisible(hwnd):
             win32gui.PostMessage(hwnd,win32con.WM_CLOSE,0,0)
     win32gui.EnumWindows(visit,None)
-    deadline=time.monotonic()+20
+    deadline=time.monotonic()+45
     while _process_path(pid) and time.monotonic()<deadline:time.sleep(.15)
     if _process_path(pid):raise RuntimeError('Azahar attend votre confirmation de fermeture. Aucun fichier remplacé ; réessayez après l’avoir fermé.')
 
@@ -52,8 +57,8 @@ def close_game(ticket):
 def restart_game(ticket):
     from PyQt6.QtNetwork import QLocalSocket
     from src.companion_control import endpoint
-    # Le compagnon précédent sort normalement avec son émulateur.
-    deadline=time.monotonic()+12
+    # Le compagnon précédent sort normalement avec son émulateur, après sa restauration.
+    deadline=time.monotonic()+30
     while time.monotonic()<deadline:
         connection=QLocalSocket();connection.connectToServer(endpoint(ticket['profile']))
         present=connection.waitForConnected(150);connection.abort()
@@ -80,7 +85,7 @@ def perform_import(ticket,slot,*,close=close_game,running=archive_in_use,restart
 
 
 def run(path):
-    from PyQt6.QtCore import pyqtSignal,QObject,Qt
+    from PyQt6.QtCore import pyqtSignal,QObject
     from PyQt6.QtWidgets import QApplication,QDialog,QVBoxLayout,QComboBox,QHBoxLayout
     from src.overlay.coop_panel import button,label
     from src.overlay.menu_widgets import MENU_STYLE
@@ -111,22 +116,29 @@ def run(path):
     row=QHBoxLayout();layout.addLayout(row)
     cancel=button('Annuler',window.reject);row.addWidget(cancel)
     start=button('Importer et rouvrir le jeu',lambda:begin(),'primary');start.setEnabled(False);row.addWidget(start)
-    ticket=None;busy=False
+    ticket=None;worker=None
+    def topmost(on):
+        # Jamais setWindowFlag ici : il masque la fenêtre un instant, ce qui
+        # termine exec() puis le processus, et l'import en cours avec lui.
+        try:
+            import win32con,win32gui
+            win32gui.SetWindowPos(int(window.winId()),win32con.HWND_TOPMOST if on else win32con.HWND_NOTOPMOST,
+                                  0,0,0,0,win32con.SWP_NOMOVE|win32con.SWP_NOSIZE|win32con.SWP_NOACTIVATE)
+        except Exception:pass
     def begin():
-        nonlocal busy
-        busy=True;window.busy=True;destination=slots.currentIndex()+1
+        nonlocal worker
+        window.busy=True;destination=slots.currentIndex()+1
         slots.setEnabled(False);start.setEnabled(False);cancel.setEnabled(False)
-        window.setWindowFlag(Qt.WindowType.WindowCloseButtonHint,False);window.show()
-        info.setText('Fermeture propre du jeu, copie de secours puis installation…')
+        # Azahar peut demander de confirmer sa fermeture : ne pas le recouvrir.
+        topmost(False)
+        info.setText('Fermeture du jeu… Si Azahar demande de confirmer, répondez Oui.\nCopie de secours puis installation ensuite.')
         def work():
             try:events.finished.emit(perform_import(ticket,destination),None)
             except RestartPending as exc:events.finished.emit(exc.backup,str(exc))
             except Exception as exc:events.finished.emit(None,str(exc))
-        threading.Thread(target=work,daemon=True).start()
+        worker=threading.Thread(target=work,daemon=True);worker.start()
     def finish(result,error):
-        nonlocal busy
-        busy=False;window.busy=False;cancel.setEnabled(True);cancel.setText('Fermer')
-        window.setWindowFlag(Qt.WindowType.WindowCloseButtonHint,True);window.show()
+        window.busy=False;cancel.setEnabled(True);cancel.setText('Fermer')
         if error:info.setText(error);start.setEnabled(result is None);slots.setEnabled(result is None)
         else:info.setText(f'Progression installée. Dans Azahar, chargez le fichier {slots.currentIndex()+1}.\nCopie de secours : {result}')
     events.finished.connect(finish)
@@ -138,7 +150,11 @@ def run(path):
         info.setText(f'Votre progression est à l’abri. Choisissez où placer celle de l’hôte.\nCopie : {backup}')
         start.setEnabled(True);slots.setEnabled(True)
     except (OSError,ValueError,KeyError,TypeError) as exc:info.setText(str(exc))
+    # Ouverte en arrière-plan pendant la partie : elle doit passer devant Azahar.
+    window.show();topmost(True);window.raise_();window.activateWindow()
     window.exec()
+    # Une installation commencée va toujours jusqu'au bout.
+    if worker:worker.join()
 
 
 if __name__=='__main__':run(sys.argv[1])

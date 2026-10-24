@@ -100,6 +100,9 @@ class CoopOrchestrator(QObject):
     def sync_loop(self) -> None:
         while self._running:
             frame_started=time.monotonic()
+            # Hors des instantanés du jeu : sur l'écran titre, rien d'autre ne change.
+            try:progress=self.online_progress.poll()
+            except Exception:progress={}
             try:
                 tunic_str = TUNIC_NAMES.get(self.tunic_idx, "green")
                 with self._memory_lock:
@@ -177,6 +180,7 @@ class CoopOrchestrator(QObject):
                     )
 
                 ui_snapshot = {
+                    **progress,
                     **self.appearance.status(),
                     **self.shared_world.status(),
                     **(self.enemies.status() if self.enemies else {'enemy_sync_status':'off'}),
@@ -204,7 +208,7 @@ class CoopOrchestrator(QObject):
                 with self._memory_lock:
                     self.memory.last_snapshot.in_game = False
                     self.memory.player_ptr = 0
-                self._latest_ui_snapshot = dict(self._latest_ui_snapshot, in_game=False,
+                self._latest_ui_snapshot = dict(self._latest_ui_snapshot, **progress, in_game=False,
                     detection_status="read_error", rupees=None, can_teleport=False,
                     players=[dict(p, in_game=False) if p.get("is_self") else p
                              for p in self._latest_ui_snapshot.get("players", [])])
@@ -257,7 +261,6 @@ class CoopOrchestrator(QObject):
                       port=self.net.bind_port, host_target=self.net.host_target)
         result.update(self.net.get_connection_info())
         result.update(self.hosting_access.snapshot())
-        result.update(self.online_progress.poll())
         return result
 
     def set_identity(self, name: str, tunic_idx: int) -> None:
