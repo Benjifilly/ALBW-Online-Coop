@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFERENCES = ROOT / ".local/ui.json"
 AZAHAR_DOWNLOAD = "https://github.com/azahar-emu/azahar/releases/latest"
 RPC_PORT = 45987          # Azahar's fixed RPC server port
+GDB_PORT = 24689          # Azahar's default debugger port
 DEFAULT_ROOM_PORT = 45990
 GAME_WAIT = 90            # seconds to wait for ALBW after starting Azahar
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -49,7 +50,7 @@ class Status:
     checks: list
     emulator: str = ""
     game: str = ""
-    rpc_enabled: bool = False
+    link_ready: bool = False
     azahar_running: bool = False
     albw_running: bool = False
     version: str = ""
@@ -78,10 +79,29 @@ def development_version():
         return "version locale"
 
 
-def rpc_enabled(settings):
+def setting(settings, key, default, kind=bool):
     """Azahar ignores a value whose '\\default' twin is true."""
-    key = "Debugging/enable_rpc_server"
-    return settings.value(key, False, type=bool) and not settings.value(key + "/default", False, type=bool)
+    if settings.value(key + "/default", False, type=bool):
+        return default
+    return settings.value(key, default, type=kind)
+
+
+def rpc_enabled(settings):
+    return setting(settings, "Debugging/enable_rpc_server", False)
+
+
+def link_ready(settings):
+    """The companion reads the game over RPC and removes its renderer with the debugger.
+
+    Azahar's debugger never pauses the game by itself: it only listens, and
+    the companion connects for a fraction of a second when a hook goes away.
+    """
+    return rpc_enabled(settings) and setting(settings, "Debugging/use_gdbstub", False)
+
+
+def gdb_port(settings):
+    port = setting(settings, "Debugging/gdbstub_port", GDB_PORT, int)
+    return port if 1024 <= port <= 65535 else GDB_PORT
 
 
 def azahar_config(emulator):
@@ -217,11 +237,11 @@ def gather():
     elif not game:
         checks.append(Check("Jeu", "bad", "introuvable"))
     if not info:status.game = ""
-    status.rpc_enabled = rpc_enabled(settings_at(azahar_config(status.emulator)))
-    checks.append(Check("Serveur RPC", "ok" if status.rpc_enabled else "bad",
-                        "activé" if status.rpc_enabled else "désactivé"))
+    status.link_ready = link_ready(settings_at(azahar_config(status.emulator)))
+    checks.append(Check("Liaison", "ok" if status.link_ready else "bad",
+                        "serveur RPC et débogueur" if status.link_ready else "à activer (Azahar fermé)"))
     status.azahar_running = safely(azahar_running, False)
-    status.albw_running = status.azahar_running and status.rpc_enabled and safely(albw_attached, False)
+    status.albw_running = status.azahar_running and status.link_ready and safely(albw_attached, False)
     checks.append(Check("Partie", "ok" if status.albw_running else "info",
                         "ALBW ouvert" if status.albw_running else
                         "Azahar ouvert" if status.azahar_running else "Azahar fermé"))
@@ -255,8 +275,8 @@ class Screen:
                  ("join", "Rejoindre un ami", f"Dernier : {s.friend}" if s and s.friend else "Teste puis rejoint son salon")]
         if s and not s.emulator:
             items.append(("download", "Télécharger Azahar", "Ouvre la page GitHub d’Azahar"))
-        if s and not s.rpc_enabled:
-            items.append(("rpc", "Activer le serveur RPC d’Azahar", "Nécessaire pour lire la partie"))
+        if s and not s.link_ready:
+            items.append(("rpc", "Activer la liaison du compagnon", "Serveur RPC et débogueur d’Azahar"))
         items += [("local", "Essayer à deux sur ce PC", "Deux Azahar côte à côte"),
                   ("paths", "Choisir Azahar et le jeu", "Glisser-déposer les fichiers"),
                   ("refresh", "Vérifier à nouveau", ""),
@@ -354,15 +374,18 @@ def choose_paths(screen):
     screen.say("Azahar et le jeu sont enregistrés.", "ok")
 
 
-def enable_rpc(screen):
+def enable_link(screen):
     from src.local_session import _set, settings_at
     if azahar_running():
         return screen.say("Fermez Azahar d’abord : il réécrit ses réglages en quittant.", "bad")
     settings = settings_at(azahar_config(screen.status.emulator))
+    port = gdb_port(settings)
     _set(settings, "Debugging/enable_rpc_server", True)
+    _set(settings, "Debugging/use_gdbstub", True)
+    _set(settings, "Debugging/gdbstub_port", port)
     settings.sync()
-    ok = rpc_enabled(settings_at(azahar_config(screen.status.emulator)))
-    screen.say("Serveur RPC activé." if ok else "Le réglage n’a pas pu être écrit.", "ok" if ok else "bad")
+    ok = link_ready(settings_at(azahar_config(screen.status.emulator)))
+    screen.say("Liaison du compagnon activée." if ok else "Le réglage n’a pas pu être écrit.", "ok" if ok else "bad")
 
 
 def wait_for_game():
@@ -420,6 +443,27 @@ def join_friend(screen):
     return play(screen, arguments)
 
 
+def companion_link(pid, status):
+    """The local trial's full link for this Azahar: RPC memory, debugger, game identity.
+
+    Without it the companion only exchanges hearts: no colour, no friends drawn,
+    no shared world (its renderer needs the debugger to remove its hooks).
+    """
+    from src.local_session import identify_game, settings_at
+    from src.overlay.window_tracker import _process_path
+    emulator = _process_path(pid) or status.emulator
+    try:
+        from src.online_progress import running_game
+        game = running_game(pid) or status.game
+    except Exception:
+        game = status.game
+    if not game:
+        raise ValueError("Jeu ALBW introuvable.")
+    info = identify_game(game)
+    return ["--rpc-port", str(RPC_PORT), "--gdb-port", str(gdb_port(settings_at(azahar_config(emulator)))),
+            "--title-id", f"{info.title_id:016X}", "--process-name", info.process_name]
+
+
 def play(screen, arguments=()):
     """Run a session tied to one Azahar, then come back to the title screen.
 
@@ -429,28 +473,38 @@ def play(screen, arguments=()):
     """
     status = screen.status
     pid = safely(azahar_pid, 0)
-    if not pid:
-        if not status.emulator or not status.game:
-            screen.say("Choisissez d’abord Azahar et le jeu.", "bad")
+    if not pid and (not status.emulator or not status.game):
+        screen.say("Choisissez d’abord Azahar et le jeu.", "bad")
+        return False
+    if not status.link_ready:
+        # Azahar reads its settings when it starts and rewrites them when it quits.
+        if pid:
+            screen.say("Fermez Azahar : le mod doit activer sa liaison (serveur RPC et débogueur).", "bad")
             return False
-        if not status.rpc_enabled:
-            answer = ask("Le serveur RPC d’Azahar est désactivé. L’activer maintenant ? [O/n] ")
-            if answer.lower() in ("n", "non"):
-                screen.say("Sans serveur RPC, le mod ne peut pas lire la partie.", "bad")
-                return False
-            enable_rpc(screen)
-            from src.local_session import settings_at
-            if not rpc_enabled(settings_at(azahar_config(status.emulator))):
-                return False
+        answer = ask("Le compagnon a besoin du serveur RPC et du débogueur d’Azahar. Les activer ? [O/n] ")
+        if answer.lower() in ("n", "non"):
+            screen.say("Sans cette liaison, le compagnon ne peut ni lire la partie ni afficher vos amis.", "bad")
+            return False
+        enable_link(screen)
+        from src.local_session import settings_at
+        if not link_ready(settings_at(azahar_config(status.emulator))):
+            return False
+        status.link_ready = True
+    if not pid:
         pid = subprocess.Popen([status.emulator, status.game], cwd=str(Path(status.emulator).parent),
                                close_fds=True).pid
         print(f"\n  {GOLD}▶{RESET} {PALE}Azahar démarre avec ALBW.{RESET}")
         wait_for_game()
+    try:
+        link = companion_link(pid, status)
+    except (OSError, ValueError) as exc:
+        screen.say(f"{exc} Choisissez le jeu dans « Choisir Azahar et le jeu ».", "bad")
+        return False
     cursor(True)
     print(f"\n  {MUTED}Le compagnon s’ouvre. Fermer Azahar termine la session.{RESET}")
     started = time.monotonic()
     try:
-        subprocess.run([sys.executable, "-m", "src.main", *arguments, "--emulator-pid", str(pid)],
+        subprocess.run([sys.executable, "-m", "src.main", *arguments, *link, "--emulator-pid", str(pid)],
                        cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1"))
     except KeyboardInterrupt:
         pass
@@ -494,7 +548,7 @@ def run():
                 elif action == "download":
                     os.startfile(AZAHAR_DOWNLOAD)
                     screen.say("Installez Azahar, puis « Choisir Azahar et le jeu ».", "info")
-                elif action == "rpc":enable_rpc(screen)
+                elif action == "rpc":enable_link(screen)
                 elif action == "local":
                     background("-m", "src.local_session")
                     screen.say("Fenêtre d’essai à deux ouverte.", "ok")

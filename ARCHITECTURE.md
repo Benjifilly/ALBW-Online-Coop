@@ -22,6 +22,18 @@ sur disque.
 | Butins | `src/memory/shared_loot.py` + `src/network/shared_loot.py` |
 | Interface | `src/overlay/` |
 
+## Liaison avec Azahar
+
+Le rendu, le monde partagé, les butins et la progression exigent le pont
+hybride (`src/rpc/hybrid_bridge.py`) : mémoire par RPC, débogueur GDB
+seulement pour retirer les crochets à un point d'arrêt sûr. Le lanceur active
+dans l'Azahar du joueur le serveur RPC et le débogueur (Azahar fermé, après
+accord), puis passe au compagnon `--rpc-port`, `--gdb-port`, `--title-id` et
+`--process-name`. Le débogueur ne met pas le jeu en pause : il écoute, et le
+compagnon s'y connecte le temps d'un retrait. Sans ce pont, seuls les cœurs et
+la liste des joueurs fonctionnent. L'essai à deux prépare des copies portables
+avec un port RPC privé.
+
 ## Code natif
 
 Sources `src/memory/*.arm`, assemblées par `scripts/build_remote_model.py`

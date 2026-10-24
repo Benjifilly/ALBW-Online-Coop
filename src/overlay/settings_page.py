@@ -108,7 +108,7 @@ class SettingsPage(QWidget):
         self.preview.set_state(state, self.overlay.hud_settings["opacity"])
         # Silent when it works; a short action when it does not.
         self.render_status.setText({
-            'needs_launcher':'Ouvrez les jeux avec « Essayer à deux sur ce PC ».',
+            'needs_launcher':'Relancez le jeu depuis run_coop.bat pour activer la liaison.',
             'unsupported':'Disponible pour la version EUR.',
             'waiting_game':'Ouvrez une sauvegarde.',
             'preparing':'Préparation du compagnon…',
@@ -126,5 +126,5 @@ class SettingsPage(QWidget):
         elif state.get("detection_status") == "albw_detected":
             self.detection.setText("ALBW reconnu : ouvrez une sauvegarde.")
         else:
-            self.detection.setText("Activez le serveur RPC d’Azahar (réglages de débogage).")
+            self.detection.setText("Lancez le jeu depuis run_coop.bat : il active la liaison d’Azahar.")
         self.detection.setHidden(not self.detection.text())

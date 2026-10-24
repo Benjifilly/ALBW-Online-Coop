@@ -170,6 +170,9 @@ class InGameAppearance:
             self.state='off'
             return
         if not getattr(self.bridge,'fast_memory',False):
+            if self.state!='needs_launcher':
+                self.log('Couleurs, compagnon et monde partagé indisponibles : lancez le jeu depuis run_coop.bat '
+                         '(liaison RPC et débogueur d’Azahar).')
             self.visible=self.colour_applied=False
             self.state='needs_launcher'
             return

@@ -66,13 +66,14 @@
 
 1. **Téléchargez** le projet : bouton vert **Code → Download ZIP**, puis
    décompressez-le où vous voulez.
-2. **Dans Azahar**, ouvrez les réglages, onglet **Débogage**, et cochez
-   **Enable RPC Server**.
-3. **Double-cliquez sur `run_coop.bat`.**
+2. **Fermez Azahar**, puis **double-cliquez sur `run_coop.bat`.**
 
 Au premier lancement, le lanceur installe ce qui manque (Python, PyQt6,
-pygame), puis un écran d'accueil vérifie tout pour vous : Azahar, le jeu, le
-serveur RPC, la manette et le réseau.
+pygame), puis un écran d'accueil vérifie tout pour vous : Azahar, le jeu, la
+liaison, la manette et le réseau. Il propose d'activer la liaison du compagnon
+dans Azahar (serveur RPC et débogueur, onglet **Débogage**) : sans elle, ni
+couleurs, ni amis affichés, ni monde partagé. Lancez ensuite toujours le jeu
+depuis le lanceur.
 
 ## 🎮 Jouer en ligne
 
@@ -185,7 +186,7 @@ titre.
 <details>
 <summary><b>Rien ne se connecte</b></summary>
 
-Vérifiez que <i>Enable RPC Server</i> est coché dans Azahar, que l'adresse de
+Vérifiez que l'écran d'accueil indique la liaison active, que l'adresse de
 l'hôte est la bonne et que le port UDP 45990 est joignable chez lui (ou que
 vous êtes tous sur le même réseau Tailscale). Dans Tailscale, le PC de l'hôte
 doit être accessible à l'ami. Utilisez son adresse en <code>100.…</code>, pas
