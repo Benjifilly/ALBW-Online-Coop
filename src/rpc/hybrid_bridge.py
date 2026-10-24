@@ -7,7 +7,10 @@ class HybridBridge(AzaharBridge):
     fast_memory=True
 
     def __init__(self,rpc_port,gdb_port,title_id,process_name):
-        super().__init__(port=rpc_port,timeout=.25,retries=1)
+        # Azahar answers RPC from its emulation loop: a loading or shader
+        # compilation stalls it. Half a second detached the game and stopped
+        # the renderer on a fresh install (24/10); about one second is tolerated.
+        super().__init__(port=rpc_port,timeout=.25,retries=3)
         self.debugger=GDBBridge(gdb_port,title_id,process_name,timeout=2)
         self.expected_title_id=title_id
 

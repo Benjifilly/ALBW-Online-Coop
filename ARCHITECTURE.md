@@ -28,11 +28,19 @@ Le rendu, le monde partagé, les butins et la progression exigent le pont
 hybride (`src/rpc/hybrid_bridge.py`) : mémoire par RPC, débogueur GDB
 seulement pour retirer les crochets à un point d'arrêt sûr. Le lanceur active
 dans l'Azahar du joueur le serveur RPC et le débogueur (Azahar fermé, après
-accord), puis passe au compagnon `--rpc-port`, `--gdb-port`, `--title-id` et
-`--process-name`. Le débogueur ne met pas le jeu en pause : il écoute, et le
-compagnon s'y connecte le temps d'un retrait. Sans ce pont, seuls les cœurs et
-la liste des joueurs fonctionnent. L'essai à deux prépare des copies portables
-avec un port RPC privé.
+accord), et retire la pause en arrière-plan, puis passe au compagnon
+`--rpc-port`, `--gdb-port`, `--title-id` et `--process-name`. Le débogueur ne
+met pas le jeu en pause : il écoute, et le compagnon s'y connecte le temps
+d'un retrait. Sans ce pont, seuls les cœurs et la liste des joueurs
+fonctionnent. L'essai à deux prépare des copies portables avec un port RPC
+privé.
+
+Azahar répond au RPC depuis sa boucle d'émulation : un chargement ou une
+compilation de shaders la bloque. Le pont tolère environ une seconde sans
+réponse avant de se détacher ; le rendu interrompu redémarre ensuite seul,
+trois fois au plus par session, cinq secondes après la coupure. Le journal
+garde sous chaque problème ses détails (origine dans le code, dernière requête
+restée sans réponse), affichés par « Problèmes » et inclus par « Copier ».
 
 ## Code natif
 
@@ -144,16 +152,20 @@ Au démarrage, `src/updater.py` consulte l'API publique GitHub du dépôt
 `Benjifilly/ALBW-Online-Coop`. Lecture de `VERSION` et ZIP sont liés au même
 commit de `main`. La recherche est bornée et facultative ; une panne réseau
 n'empêche pas de jouer. Les copies de développement ou les copies Git
-modifiées sont ignorées. Au premier lancement d'un ZIP sans numéro de commit,
-les empreintes GitHub des fichiers publics permettent de reconnaître une
-révision différente même si `VERSION` n'a pas changé.
+modifiées sont ignorées ; une copie Git propre se fie à son HEAD (celle qui
+publie ne se propose ni sa propre révision ni une plus ancienne). Au premier
+lancement d'un ZIP sans numéro de commit, les empreintes GitHub des fichiers
+publics permettent de reconnaître une révision différente même si `VERSION`
+n'a pas changé. Une seule requête donne la révision et les titres des commits
+affichés comme nouveautés.
 
-Après accord O/N, seuls les fichiers d'exécution et de présentation sont
+Après accord, seuls les fichiers d'exécution et de présentation sont
 installés. `.local/`, `.venv/`, `backups/` et Git sont conservés. L'archive
-est validée (chemins, liens, doublons et tailles), puis chaque fichier remplacé
-est copié et vérifié sous `backups/`. Un verrou empêche deux installations
-simultanées. Une propriété de patch active interdit le remplacement ; elle
-n'est jamais supprimée par la mise à jour.
+est validée (chemins, liens, doublons et tailles) ; les fichiers remplacés
+restent en mémoire pour le retour arrière, sans copie sur disque. Un verrou
+empêche deux installations simultanées. Un marqueur `.patch-owner` dont
+l'Azahar ou le compagnon vit encore interdit le remplacement ; celui d'un jeu
+fermé est ignoré. Aucun marqueur n'est supprimé par la mise à jour.
 
 Les dépendances ne sont réinstallées que si `requirements.txt` change. En
 cas d'échec, les fichiers précédents sont restaurés et la réinstallation

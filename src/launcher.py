@@ -95,8 +95,11 @@ def link_ready(settings):
 
     Azahar's debugger never pauses the game by itself: it only listens, and
     the companion connects for a fraction of a second when a hook goes away.
+    Azahar answers RPC from its emulation loop, so the game must keep running
+    while the companion's menu has the focus.
     """
-    return rpc_enabled(settings) and setting(settings, "Debugging/use_gdbstub", False)
+    return (rpc_enabled(settings) and setting(settings, "Debugging/use_gdbstub", False)
+            and not setting(settings, "UI/pauseWhenInBackground", False))
 
 
 def gdb_port(settings):
@@ -383,6 +386,7 @@ def enable_link(screen):
     _set(settings, "Debugging/enable_rpc_server", True)
     _set(settings, "Debugging/use_gdbstub", True)
     _set(settings, "Debugging/gdbstub_port", port)
+    _set(settings, "UI/pauseWhenInBackground", False)
     settings.sync()
     ok = link_ready(settings_at(azahar_config(screen.status.emulator)))
     screen.say("Liaison du compagnon activée." if ok else "Le réglage n’a pas pu être écrit.", "ok" if ok else "bad")
@@ -481,7 +485,8 @@ def play(screen, arguments=()):
         if pid:
             screen.say("Fermez Azahar : le mod doit activer sa liaison (serveur RPC et débogueur).", "bad")
             return False
-        answer = ask("Le compagnon a besoin du serveur RPC et du débogueur d’Azahar. Les activer ? [O/n] ")
+        answer = ask("Le compagnon a besoin du serveur RPC et du débogueur d’Azahar, "
+                     "et d’un jeu qui continue en arrière-plan. Les activer ? [O/n] ")
         if answer.lower() in ("n", "non"):
             screen.say("Sans cette liaison, le compagnon ne peut ni lire la partie ni afficher vos amis.", "bad")
             return False

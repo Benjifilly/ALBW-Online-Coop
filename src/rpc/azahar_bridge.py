@@ -48,6 +48,7 @@ class AzaharBridge:
         self.region: Optional[str] = None
         self.rpc_connected = False
         self.detection_status = "rpc_unavailable"
+        self.last_failure = ""
         self._next_probe = 0.0
         self._lock = threading.RLock()
 
@@ -104,6 +105,9 @@ class AzaharBridge:
                     continue
             self.rpc_connected = False
             self.detection_status = "rpc_unavailable"
+            # For the journal's details: which request the game left unanswered.
+            self.last_failure = (f"{RequestType(request_type).name} sans réponse du port {self.port} "
+                                 f"({self.retries + 1} essais de {self.timeout:g} s)")
             self.detach()
             return None
 

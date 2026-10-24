@@ -62,6 +62,18 @@ def print_banner(preview=False):
            f"{'' if preview else '  F8  ·  Échap pour revenir au jeu'}{RESET}\n")
 
 
-def print_event(stamp, message):
+def where(exc, frames=3):
+    """Where an exception came from in the mod's own code: file:line function → …"""
+    import traceback
+    from pathlib import Path
+    source = Path(__file__).resolve().parent
+    stack = traceback.extract_tb(exc.__traceback__)
+    own = [f for f in stack if Path(f.filename).resolve().is_relative_to(source)] or stack
+    return f"{type(exc).__name__} · " + " → ".join(f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in own[-frames:])
+
+
+def print_event(stamp, message, detail=()):
     mark, colour = TONES[log_tone(message)]
     _write(f"  {MUTED}{stamp}{RESET}  {colour}{mark} {message}{RESET}")
+    for line in detail:
+        _write(f"  {' ' * len(stamp)}    {MUTED}{line}{RESET}")

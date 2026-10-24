@@ -1,4 +1,4 @@
-"""Mise à jour publique facultative, avec sauvegarde et retour arrière."""
+"""Mise à jour publique facultative, avec retour arrière."""
 import base64
 from contextlib import contextmanager
 from datetime import datetime
@@ -13,7 +13,6 @@ import subprocess
 import sys
 import threading
 import urllib.request
-import uuid
 import zipfile
 from src.version import ROOT,read_version,version_tuple
 from src.local_saves import _atomic_write
@@ -209,18 +208,13 @@ def _install(raw,release,root,*,dependencies=None):
     root=Path(root).resolve();planned=unpack(raw,release['version'])
     if patch_owners(root):
         raise RuntimeError('Un jeu est encore ouvert avec le compagnon : fermez Azahar, puis relancez run_coop.bat.')
-    before={};backup=root/'backups'/f'mise-a-jour-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}'
+    # Les fichiers remplacés restent en mémoire pour le retour arrière : une
+    # copie sur disque n'apporterait rien, le dépôt public garde chaque version.
+    before={}
     for name in planned:
         path=root/name
         if not path.resolve().is_relative_to(root):raise ValueError('Un dossier du projet pointe hors de son installation.')
         before[name]=path.read_bytes() if path.is_file() else None
-    backup.mkdir(parents=True,exist_ok=False)
-    for name,data in before.items():
-        if data is not None:
-            path=backup/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
-            if path.read_bytes()!=data:raise OSError('La copie de secours de la mise à jour a échoué.')
-    record=dict(state='prepared',version=release['version'],revision=release['revision'],created=[n for n,d in before.items() if d is None])
-    _atomic_write(backup/'verification.json',json.dumps(record,indent=2).encode())
     changed=[];deps_started=False
     dependencies=dependencies or pip_install
     try:
@@ -235,13 +229,11 @@ def _install(raw,release,root,*,dependencies=None):
         for name in reversed(changed):
             if before[name] is None:(root/name).unlink(missing_ok=True)
             else:_atomic_write(root/name,before[name])
-        record['state']='rolled_back';_atomic_write(backup/'verification.json',json.dumps(record).encode())
         if deps_started and before.get('requirements.txt') is not None:
             try:dependencies(root/'requirements.txt')
             except Exception:raise RuntimeError('Les fichiers précédents sont restaurés. La réinstallation des composants a échoué ; vérifiez Internet puis relancez run_coop.bat.') from exc
         raise
-    record['state']='installed';_atomic_write(backup/'verification.json',json.dumps(record).encode())
-    return backup
+    return sum(before[name]!=data for name,data in planned.items())
 
 
 def pip_install(path):
@@ -326,7 +318,7 @@ def main():
         status(f'{GOLD}◐{RESET} {PALE}Installation des fichiers…{RESET}')
         def components(path):
             say(f'\n  {GOLD}◐{RESET} {PALE}Installation des nouveaux composants…{RESET}');pip_install(path)
-        backup=install(raw,release,ROOT,dependencies=components)
+        count=install(raw,release,ROOT,dependencies=components)
     except KeyboardInterrupt:
         say(f'\n  {MUTED}Mise à jour interrompue. Votre version actuelle reste en place.{RESET}');return 0
     except (OSError,ValueError,RuntimeError,subprocess.SubprocessError,zipfile.BadZipFile) as exc:
@@ -335,10 +327,9 @@ def main():
         # Le lanceur efface l'écran : laisser le temps de lire.
         ask('Entrée pour lancer le jeu quand même.')
         return 0
-    try:backup=backup.relative_to(ROOT)
-    except ValueError:pass
-    status(f'{GREEN}✔{RESET} {PALE}{BOLD}Mise à jour installée{RESET} {MUTED}· {release["version"]} · {release["revision"][:7]}{RESET}')
-    say(f'\n  {MUTED}Ancienne version gardée dans {backup}{RESET}\n  {PALE}Relancement…{RESET}\n')
+    status(f'{GREEN}✔{RESET} {PALE}{BOLD}Mise à jour installée{RESET} {MUTED}· {release["version"]} · '
+           f'{release["revision"][:7]} · {count} fichier{"s" if count>1 else ""} modifié{"s" if count>1 else ""}{RESET}')
+    say(f'\n  {PALE}Relancement…{RESET}\n')
     return 10
 
 

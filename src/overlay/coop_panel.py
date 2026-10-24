@@ -377,13 +377,18 @@ class CoopPanel(QFrame):
     def _render_logs(self):
         problems_only = self.log_filter.checkedId() == 1
         rows = []
-        for line in self._logs:
+        for entry in self._logs:
+            line, *detail = entry.split("\n")
             stamp, _, message = line.partition("  ")
             if not message:stamp, message = "", line
             tone = log_tone(message)
             if problems_only and tone != "problem":continue
             rows.append(f'<div style="margin:1px 0"><span style="color:{LOG_COLOURS["time"]}">{html.escape(stamp)}</span>'
                         f'&nbsp;&nbsp;<span style="color:{LOG_COLOURS[tone]}">{html.escape(message.strip())}</span></div>')
+            # Technical details only where problems are examined.
+            if problems_only:
+                rows.extend(f'<div style="margin:0 0 1px 74px;color:{LOG_COLOURS["time"]}">{html.escape(text)}</div>'
+                            for text in detail)
         bar = self.log_view.verticalScrollBar()
         at_end = bar.value() >= bar.maximum() - 2
         old_value = bar.value()

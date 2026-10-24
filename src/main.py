@@ -25,7 +25,7 @@ from src.memory.life_checkpoint import LifeCheckpoint
 from src.network.coop_node import CoopNetworkNode
 from src.overlay.azahar_overlay import AzaharNativeOverlay
 from src.rpc.azahar_bridge import AzaharBridge
-from src.console import print_banner, print_event
+from src.console import print_banner, print_event, where
 
 TUNIC_NAMES = {0: "green", 1: "blue", 2: "red", 3: "purple"}
 TUNIC_INDICES = {"green": 0, "blue": 1, "red": 2, "purple": 3}
@@ -84,13 +84,16 @@ class CoopOrchestrator(QObject):
             "players": [],
         }
 
-    def add_log(self, msg: str) -> None:
+    def add_log(self, msg: str, detail: str = "") -> None:
         stamp = time.strftime("%H:%M:%S")
+        # Details follow the message on their own lines: the « Problèmes »
+        # view and « Copier » show them, the plain journal stays short.
+        lines = [line.strip() for line in str(detail).splitlines() if line.strip()]
         with self._log_lock:
-            self.logs.append(f"{stamp}  {msg}")
+            self.logs.append("\n".join([f"{stamp}  {msg}", *lines]))
             self.logs = self.logs[-200:]
             logs = list(self.logs)
-        print_event(stamp, msg)
+        print_event(stamp, msg, lines)
         self.logs_changed.emit(logs)
 
     def get_ui_logs(self) -> List[str]:
@@ -119,7 +122,7 @@ class CoopOrchestrator(QObject):
                         "other_game": "Le jeu ouvert n’est pas une version EUR / USA reconnue d’ALBW.",
                         "rpc_incompatible": "Le serveur RPC ne fournit pas la liste des jeux attendue.",
                         "rpc_unavailable": "Communication avec le jeu indisponible. Nouvelle tentative automatique.",
-                    }[detection])
+                    }[detection], getattr(self.bridge, "last_failure", "") if detection == "rpc_unavailable" else "")
                 all_peers,life_ready = self.net.get_life_peers()
                 world=(self.shared_world.native if not self.shared_world.error
                        and self.shared_world.state not in ('retiring','changing_room','waiting_game','waiting_session') else None)
@@ -215,7 +218,7 @@ class CoopOrchestrator(QObject):
                 self.snapshot_changed.emit(self.get_ui_snapshot())
                 message = f"Lecture du jeu interrompue : {type(exc).__name__}: {exc}"
                 if message != self._last_error:
-                    self.add_log(message)
+                    self.add_log(message, where(exc))
                     self._last_error = message
             self._write_status()
             time.sleep(max(.001,1/60-(time.monotonic()-frame_started)))

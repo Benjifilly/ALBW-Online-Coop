@@ -12,10 +12,14 @@ from src.memory.remote_model import MAILBOX, RemoteModelTrial
 from src.memory.native_jobs import NativeJobRejected
 from src.memory.pose_buffer import PoseBuffer
 from src.rpc.azahar_bridge import TITLE_ID_EUR
+from src.console import where
+
+RETRIES=3          # automatic renderer restarts per session after an interruption
+RETRY_DELAY=5      # seconds, long enough for a loading or a shader compilation
 
 
 class InGameAppearance:
-    def __init__(self,bridge,cache_path,emulator_pid=0,on_log=lambda message:None,marker_path=None):
+    def __init__(self,bridge,cache_path,emulator_pid=0,on_log=lambda message,detail='':None,marker_path=None):
         self.bridge=bridge
         self.cache_path=Path(cache_path)
         self.marker_path=Path(marker_path) if marker_path else self.cache_path.with_suffix('.patch-owner')
@@ -36,6 +40,7 @@ class InGameAppearance:
         self._native_status=None
         self._palette_attempted=False
         self._failure=''
+        self._retries=0;self._retry_at=0
         self._allocation_blocked=False
         self._last_wall=None
         self._poses=PoseBuffer()
@@ -181,8 +186,19 @@ class InGameAppearance:
             self.state='unsupported' if self.bridge.attached_title_id else 'waiting_game'
             return
         if self._failure:
-            self.state='error'
-            return
+            # A stalled game (loading, shader compilation) must not leave the
+            # whole session without companion: the same as switching the
+            # renderer off and on, once the game answers again, three times.
+            if (self._retries>=RETRIES or time.monotonic()<self._retry_at
+                    or getattr(self.bridge,'attached_pid',None) is None):
+                self.state='error'
+                return
+            if self.trial and not self.close():
+                self._retry_at=time.monotonic()+RETRY_DELAY
+                self.state='error'
+                return
+            self._retries+=1;self._failure=''
+            self.log(f'Nouvelle tentative du rendu en jeu ({self._retries}/{RETRIES})…')
         if not snapshot.in_game or not memory.player_ptr:
             if self.trial:
                 self.trial.hide()
@@ -319,8 +335,12 @@ class InGameAppearance:
             else:
                 self.state='restore_pending'
         except (OSError,ValueError,RuntimeError) as exc:
-            self._failure=str(exc)
-            self.log('Rendu en jeu interrompu : '+str(exc))
+            self._failure=str(exc);self._retry_at=time.monotonic()+RETRY_DELAY
+            link=getattr(self.bridge,'last_failure','')
+            self.log('Rendu en jeu interrompu : '+str(exc),'\n'.join(filter(None,(
+                where(exc),f'Zone {snapshot.course}:{snapshot.stage} · rendu {self.state}',
+                link and 'Dernière coupure : '+link,
+                f'Nouvelle tentative dans {RETRY_DELAY} s' if self._retries<RETRIES else 'Plus de tentative automatique'))))
             self.close()
             self.state='error'
 
@@ -508,7 +528,7 @@ class InGameAppearance:
     def set_enabled(self,enabled):
         self.requested=bool(enabled)
         # A new explicit request can retry a transport error; heap attempts stay cached.
-        if enabled:self._failure=''
+        if enabled:self._failure='';self._retries=0
 
 
 def appearance_cache(profile):

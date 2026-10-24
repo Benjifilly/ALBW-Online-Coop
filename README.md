@@ -141,14 +141,14 @@ laissez l'hôte ouvert pour retrouver la même session.
 
 ### Mettre le mod à jour
 
-Au lancement de **`run_coop.bat`**, une vérification rapide sur GitHub propose
-**« Mettre à jour maintenant ? (O/N) »** lorsqu'une nouvelle version est
-disponible. Répondez **O** pour télécharger et relancer ; **N** pour continuer.
-Fermez d'abord normalement le compagnon s'il est déjà ouvert.
+Au lancement de **`run_coop.bat`**, une vérification rapide sur GitHub affiche
+les nouveautés et propose **« Installer maintenant ? [O/n] »** lorsqu'une
+nouvelle version est disponible. Appuyez sur **Entrée** pour télécharger et
+relancer ; **N** pour continuer. Si un jeu est encore ouvert avec le compagnon,
+fermez Azahar puis appuyez sur Entrée pour réessayer.
 
 Les réglages et parties de **`.local/`**, l'environnement **`.venv/`** et les
-copies de **`backups/`** sont conservés. Les fichiers remplacés sont eux aussi
-mis à l'abri dans `backups/`. Les composants sont réinstallés si nécessaire.
+copies de **`backups/`** sont conservés. Les composants sont réinstallés si nécessaire.
 Sans Internet ou si GitHub ne répond pas, le lancement continue normalement.
 Les copies de développement et les copies Git modifiées à la main ne sont pas remplacées.
 
@@ -238,8 +238,7 @@ téléchargements. Si le salon est fermé puis recréé, il s'agit d'une nouvell
 Hors ligne, le jeu continue avec la version installée. Réessayez plus tard
 avec Internet. Une copie de développement ou une copie Git modifiée est laissée
 intacte : téléchargez alors un nouveau ZIP dans un autre dossier. Si une
-installation échoue, les anciens fichiers sont restaurés ; les copies
-précédentes restent dans <code>backups/</code>.
+installation échoue, les anciens fichiers sont restaurés.
 </details>
 
 Le **journal** du menu coop explique ce qui se passe et peut être copié pour
