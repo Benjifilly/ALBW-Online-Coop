@@ -18,7 +18,7 @@ from src.overlay.menu_widgets import (
 
 
 TAB_NAMES = ("Héros", "Salon", "Compagnons", "Journal", "Réglages")
-TAB_SESSION, TAB_SETTINGS = 1, 4
+TAB_SESSION, TAB_JOURNAL, TAB_SETTINGS = 1, 3, 4
 # Journal colours: time, ordinary line, something that needs attention, good news.
 LOG_COLOURS = {"time": "#A88A5C", "plain": "#F5DDA3", "problem": "#FF9F7E", "good": "#B9DA8C"}
 

@@ -19,6 +19,8 @@ SCENE_CHANGE=0x4EF3F0
 # stays black without its script (23/10, Link 2 had to be restarted).
 WARP_TYPE=2
 LEASE=120
+# Frames the open companion menu keeps the pad (input_lock.arm), renewed each sync step.
+MENU_LEASE=90
 
 
 def scene(course,stage,entrance):
@@ -66,6 +68,11 @@ class NativePlayerLife:
         b=self.bridge;c=self.control
         if not enabled:return b.write_u32(c+4,0)
         return b.write_u32(c+8,LEASE) and b.write_u32(c+4,1)
+
+    def hold_input(self,held):
+        """Companion menu open: the game ignores the pad (every input wrapper frozen)."""
+        if not self._ready():return False
+        return self.bridge.write_u32(self.control+0x30,MENU_LEASE if held else 0)
 
     def spectating(self):
         return self._ready() and self.bridge.read_u32(self.control+4) in (1,2)

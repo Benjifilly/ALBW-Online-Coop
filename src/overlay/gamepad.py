@@ -11,6 +11,20 @@ BUTTONS = ("south", "east", "west", "north", "back", "guide", "start",
            "paddle3", "paddle4", "touchpad")
 DEFAULT_BINDING = ["leftstick", "rightstick"]
 VALID_BUTTONS = set(BUTTONS) | {"lefttrigger", "righttrigger"}
+# Sticks pushed past half their travel read as directions; never part of a shortcut.
+STICK = 16000
+STICKS = ((0, "ls_left", "ls_right"), (1, "ls_up", "ls_down"), (3, "rs_up", "rs_down"))
+
+# Menu actions, from any layout: the D-pad or left stick moves, Cross / A
+# confirms, Circle / B goes back, the shoulders change page.
+MENU_ACTIONS = {
+    "up": {"up", "ls_up"}, "down": {"down", "ls_down"},
+    "left": {"left", "ls_left"}, "right": {"right", "ls_right"},
+    "accept": {"south"}, "back": {"east"},
+    "prev_page": {"leftshoulder", "lefttrigger"}, "next_page": {"rightshoulder", "righttrigger"},
+}
+REPEATING = {"up", "down", "left", "right"}
+REPEAT_DELAY, REPEAT_EVERY = .4, .09
 
 
 def binding_label(binding, device_name=""):
@@ -79,6 +93,42 @@ class ShortcutState:
         return pressed, captured, timed_out
 
 
+class MenuNavigator:
+    """Menu actions per controller: a press acts once, a held direction repeats."""
+    def __init__(self):
+        self.held = {}
+
+    def prime(self, devices):
+        """Buttons already down (from the game, or the shortcut) never act when the menu opens."""
+        self.held = {(ident, action): float("inf") for ident, keys in devices.items()
+                     for action, sources in MENU_ACTIONS.items() if set(keys) & sources}
+
+    def update(self, devices, now, muted=()):
+        """Return (actions in order, scroll steps: positive goes down)."""
+        actions, scroll, held = [], 0, {}
+        for ident, keys in devices.items():
+            keys = set(keys)
+            for action, sources in MENU_ACTIONS.items():
+                if not keys & sources:
+                    continue
+                key = (ident, action)
+                due = self.held.get(key)
+                if ident in muted:
+                    # Buttons held with the shortcut stay quiet until released.
+                    due = float("inf")
+                elif due is None:
+                    actions.append(action)
+                    due = now + REPEAT_DELAY if action in REPEATING else float("inf")
+                elif now >= due:
+                    due = now + REPEAT_EVERY
+                    actions.append(action)
+                held[key] = due
+            if ident not in muted:
+                scroll += ("rs_down" in keys) - ("rs_up" in keys)
+        self.held = held
+        return actions, scroll
+
+
 class SDLGamepads:
     def __init__(self):
         self.devices = {}
@@ -124,6 +174,12 @@ class SDLGamepads:
                     buttons.add("lefttrigger")
                 if pad.get_axis(5) > 16000:
                     buttons.add("righttrigger")
+                for axis, low, high in STICKS:
+                    value = pad.get_axis(axis)
+                    if value <= -STICK:
+                        buttons.add(low)
+                    elif value >= STICK:
+                        buttons.add(high)
                 result[ident] = (pad.name, frozenset(buttons))
         except self.pg.error:
             # Bluetooth disconnects can happen between attached() and get_button().

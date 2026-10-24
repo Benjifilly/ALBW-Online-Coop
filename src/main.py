@@ -50,6 +50,9 @@ class CoopOrchestrator(QObject):
         self.status_path = None
         self._next_status_write = 0
         self._next_network_send = 0
+        # The open menu keeps the pad: set by the overlay, held by the sync loop.
+        self._menu_holds_input = False
+        self._input_held = False
 
         self.bridge = bridge or AzaharBridge()
         self.memory = ALBWMemoryController(self.bridge)
@@ -141,6 +144,11 @@ class CoopOrchestrator(QObject):
                     # Death, spectating and weathervane revival (life_sync).
                     for key,value in self.life.step(snap,all_peers,world,self.memory.player_ptr,roster_ready=life_ready).items():
                         setattr(snap,key,value)
+                    # Azahar reads the pad behind the menu: the game ignores it meanwhile
+                    # (input_lock.arm, under a frame lease renewed here).
+                    held=self._menu_holds_input
+                    if held or self._input_held:
+                        self._input_held=self.life.hold_input(world,held) and held
                 if frame_started>=self._next_network_send:
                     self._next_network_send=frame_started+1/30
                     # Pot/bush/rock carried by this Link (shown by the others).
@@ -366,6 +374,10 @@ class CoopOrchestrator(QObject):
         with self._memory_lock:
             self.appearance.set_enabled(enabled)
         self.add_log('Couleurs, compagnon et peinture activés.' if enabled else 'Restauration du rendu normal…')
+
+    def hold_game_input(self, held: bool) -> None:
+        """The overlay's menu is open over the game: the pad belongs to the menu."""
+        self._menu_holds_input = bool(held)
 
     def set_soul_link(self, enabled: bool) -> None:
         with self._memory_lock:

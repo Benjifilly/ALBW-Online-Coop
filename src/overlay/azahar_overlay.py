@@ -5,14 +5,15 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QEasingCurve, QRect, QTimer, QVariantAnimation
 from PyQt6.QtGui import QColor, QKeySequence, QPainter, QRegion, QShortcut
-from PyQt6.QtWidgets import QApplication, QAbstractButton, QGraphicsOpacityEffect, QLabel, QSlider, QWidget
+from PyQt6.QtWidgets import (QApplication, QAbstractButton, QAbstractSpinBox, QComboBox, QGraphicsOpacityEffect,
+                             QLabel, QSlider, QWidget)
 
-from src.overlay.coop_panel import CoopPanel, TAB_SETTINGS
+from src.overlay.coop_panel import CoopPanel, TAB_JOURNAL, TAB_NAMES, TAB_SETTINGS
 from src.overlay.menu_widgets import MENU_STYLE, MorphButton
 from src.overlay.window_tracker import (find_azahar_hwnd_and_pid,get_window_client_logical_rect,
     game_is_foreground,raise_without_activation,user32)
 from src.overlay.player_hud import LifeBanner, PlayerHUD, normalize_hud, HUD_DEFAULTS
-from src.overlay.gamepad import SDLGamepads, ShortcutState, DEFAULT_BINDING, VALID_BUTTONS
+from src.overlay.gamepad import MenuNavigator, SDLGamepads, ShortcutState, DEFAULT_BINDING, VALID_BUTTONS
 
 PREFERENCES_PATH = Path(__file__).resolve().parents[2] / ".local" / "ui.json"
 # The F8 button folds into the Triforce after this idle time (milliseconds).
@@ -20,6 +21,8 @@ BUTTON_IDLE_MS, BUTTON_MORPH_MS = 3000, 280
 BUTTON_SIZE, EMBLEM_SIZE, BUTTON_MARGIN = (178, 42), 40, 12
 # Menu opening fade, and closing fade + drop of a snapshot (ms, px).
 MENU_OPEN_MS, MENU_CLOSE_MS, MENU_DROP = 160, 140, 10
+# Right stick scrolling per gamepad poll (px), and the margin kept around a focused control.
+PAD_SCROLL, FOCUS_MARGIN = 26, 40
 
 
 def load_preferences():
@@ -56,7 +59,8 @@ class AzaharNativeOverlay(QWidget):
         self.hud_settings = normalize_hud(self.preferences.get("hud"))
         self.pad_shortcut = ShortcutState(self.preferences.get("gamepad_shortcut", DEFAULT_BINDING))
         self.gamepad_names = []
-        self._pad_previous = {}
+        self.pad_menu = MenuNavigator()
+        self._input_held = False
         self.hud_editing = False
         self.azahar_hwnd = None
         self.azahar_pid = 0
@@ -320,11 +324,17 @@ class AzaharNativeOverlay(QWidget):
         foreground = user32.GetForegroundWindow()
         active = self.isVisible() and game_is_foreground(self.azahar_hwnd,foreground,(int(self.winId()),int(self.player_hud.winId())))
         self._handle_gamepad_frame({ident: buttons for ident, (_, buttons) in devices.items()}, active)
+        # Azahar reads the pad even behind the menu: the game ignores it while the menu is shown.
+        self._hold_game_input(self.subscreen_open and self.isVisible() and bool(self.azahar_hwnd))
+
+    def _hold_game_input(self, held):
+        if held != self._input_held and self.orchestrator:
+            self.orchestrator.hold_game_input(held)
+        self._input_held = held
 
     def _handle_gamepad_frame(self, devices, active):
         was_recording = self.pad_shortcut.recording
         pressed, captured, timeout = self.pad_shortcut.update(devices, active, time.monotonic())
-        previous, self._pad_previous = self._pad_previous, devices
         if captured is not None:
             self.save_preferences()
         if captured is not None or timeout:
@@ -333,29 +343,65 @@ class AzaharNativeOverlay(QWidget):
             hint = self.sanctuary.settings_page.pad_hint
             hint.setText("Aucune combinaison enregistrée. Réessayez.")
             hint.show()
-        if was_recording:
+        if was_recording or pressed or not active or not self.subscreen_open:
+            # Whatever is down now (game buttons, the shortcut) waits for its release.
+            self.pad_menu.prime(devices)
+            if pressed and not was_recording:
+                self.toggle_subscreen()
             return
-        if pressed:
-            self.toggle_subscreen()
-            return
-        if not active or not self.subscreen_open:
-            return
-        # Never combine inputs across controllers. Navigation is edge-triggered.
-        for ident, keys in devices.items():
-            new = set(keys) - set(previous.get(ident, keys))
-            if set(self.pad_shortcut.binding) & set(keys):
-                continue
-            focus = QApplication.focusWidget()
-            if "east" in new:
-                self.close_menu()
-            elif "down" in new or "up" in new:
-                self.focusNextPrevChild("down" in new)
-            elif "south" in new and isinstance(focus, QAbstractButton):
+        # Never combine inputs across controllers; a pad holding the shortcut stays quiet.
+        chord = set(self.pad_shortcut.binding)
+        muted = {ident for ident, keys in devices.items() if chord and chord & set(keys)}
+        actions, scroll = self.pad_menu.update(devices, time.monotonic(), muted)
+        for action in actions:
+            self._pad_action(action)
+            if not self.subscreen_open:
+                return
+        if scroll:
+            self._pad_scroll(scroll * PAD_SCROLL)
+
+    def _pad_action(self, action):
+        panel = self.sanctuary
+        focus = QApplication.focusWidget()
+        step = -1 if action in ("up", "left", "prev_page") else 1
+        if action == "back":
+            self.close_menu()
+        elif action in ("prev_page", "next_page"):
+            index = (panel.pages.currentIndex() + step) % len(TAB_NAMES)
+            panel.select_page(index)
+            panel.tabs.button(index).setFocus()
+        elif action == "accept":
+            # Lists change with left / right: a popup list would trap the pad.
+            if isinstance(focus, QAbstractButton) and focus.isEnabled():
                 focus.click()
-            elif ("left" in new or "right" in new) and isinstance(focus, QSlider):
-                focus.setValue(focus.value() + (5 if "right" in new else -5))
-            elif "left" in new or "right" in new:
-                self.focusNextPrevChild("right" in new)
+        elif action in ("left", "right") and isinstance(focus, QSlider):
+            focus.setValue(focus.value() + step * max(1, focus.pageStep() // 2))
+        elif action in ("left", "right") and isinstance(focus, QAbstractSpinBox):
+            focus.stepBy(step)
+        elif action in ("left", "right") and isinstance(focus, QComboBox) and focus.count():
+            focus.setCurrentIndex(max(0, min(focus.count() - 1, focus.currentIndex() + step)))
+        else:
+            self._move_focus(step > 0)
+
+    def _move_focus(self, forward):
+        """Next or previous control, kept in view inside the scrolling page."""
+        self.focusNextPrevChild(forward)
+        focus = QApplication.focusWidget()
+        body = self.sanctuary.scroll.widget()
+        if focus is not None and body.isAncestorOf(focus):
+            self.sanctuary.scroll.ensureWidgetVisible(focus, 0, FOCUS_MARGIN)
+
+    def _pad_scroll(self, amount):
+        """The journal scrolls first on its page, then the page itself."""
+        panel = self.sanctuary
+        bars = [panel.scroll.verticalScrollBar()]
+        if panel.pages.currentIndex() == TAB_JOURNAL:
+            bars.insert(0, panel.log_view.verticalScrollBar())
+        for bar in bars:
+            before = bar.value()
+            bar.setValue(before + amount)
+            if bar.value() != before:
+                return
 
     def _update_input_region(self):
         if self._standalone and self.subscreen_open:

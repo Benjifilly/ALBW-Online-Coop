@@ -5,6 +5,9 @@
 @ events; wrapper 1 still advances message boxes. The sead controller itself
 @ is copied into these wrappers before the Player calc, so clearing it there
 @ was too late (23/10: the spectator could still talk and swing).
+@ While the companion menu is open (control +30, a frame lease counted down
+@ on wrapper 0), every wrapper is frozen: Azahar still reads the pad behind
+@ the menu (24/10: the D-pad moved the game and raised the shield).
 @ Only r0 and the flags change, as the displaced cmp would.
 .syntax unified
 .arm
@@ -16,6 +19,15 @@ ldr r2, [r1]
 ldr r3, =0x4546494c
 cmp r2, r3
 bne lock_done
+ldr r2, [r1, #0x30]
+cmp r2, #0
+beq lock_ghost
+cmp r4, #0
+subeq r2, r2, #1
+streq r2, [r1, #0x30]
+mov r0, #1
+b lock_done
+lock_ghost:
 ldr r2, [r1, #4]
 cmp r2, #0
 beq lock_done

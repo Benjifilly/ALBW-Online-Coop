@@ -179,6 +179,11 @@ class LifeSynchronizer:
         return dict(life=self.life,revive_serial=self.revive_serial,
                     life_id=self.life_id,release_serial=self.release_serial,life_party=self.party.wire())
 
+    def hold_input(self,world,held):
+        """The open companion menu keeps the pad (input_lock.arm). False if not installed."""
+        native=self._native(world)
+        return bool(native) and native.hold_input(held)
+
     def _native(self,world):
         if world is None or world.closed:
             if self._borrow_life:

@@ -171,6 +171,20 @@ installation d'Azahar n'est pas modifiée.
 | <kbd>Échap</kbd> | Fermer le menu et revenir au jeu |
 | <kbd>L3</kbd> + <kbd>R3</kbd> | Ouvrir le menu à la manette (modifiable) |
 
+Dans le menu, à la manette :
+
+| Bouton | Action |
+| :---: | --- |
+| Croix directionnelle ou stick gauche | Passer d'un élément à l'autre (maintenir pour aller vite) |
+| <kbd>←</kbd> <kbd>→</kbd> | Régler un curseur, le port ou une liste |
+| <kbd>L1</kbd> / <kbd>R1</kbd> (ou <kbd>L2</kbd> / <kbd>R2</kbd>) | Page précédente / suivante |
+| Stick droit | Faire défiler la page ou le journal |
+| <kbd>Croix</kbd> / <kbd>A</kbd> | Valider |
+| <kbd>Rond</kbd> / <kbd>B</kbd> | Fermer le menu |
+
+Tant que le menu est ouvert, la partie ignore la manette : Link reste sur
+place au lieu de marcher ou de lever le bouclier derrière le menu.
+
 Le menu regroupe votre pseudo et votre couleur de tunique, le salon, la liste
 des compagnons, le journal de la session et les réglages du HUD.
 
