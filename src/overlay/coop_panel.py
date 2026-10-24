@@ -23,6 +23,26 @@ TAB_SESSION, TAB_SETTINGS = 1, 4
 LOG_COLOURS = {"time": "#A88A5C", "plain": "#F5DDA3", "problem": "#FF9F7E", "good": "#B9DA8C"}
 
 
+def session_summary(state):
+    """Each service's state, appended by « Copier » to diagnose another PC."""
+    value = lambda key, empty="?": empty if state.get(key) is None else state.get(key)
+    error = lambda key: f" · {state[key]}" if state.get(key) else ""
+    return "\n".join((
+        "État des services",
+        f"Mod {value('version')} · {value('net_mode')} · {value('connection_state')} · "
+        f"{value('latency_ms')} ms · en jeu {value('in_game')}",
+        f"Rendu : {value('appearance_status')} · compagnon {'visible' if state.get('companion_visible') else 'non affiché'}",
+        f"Monde : {value('world_sync_status')} · observés {value('world_events_observed', 0)} · "
+        f"appliqués {value('world_events_applied', 0)} · rejoués {value('world_events_seeded', 0)} · "
+        f"ignorés {value('world_events_skipped', 0)} · perdus {value('world_events_dropped', 0)} · "
+        f"relances {value('world_sync_recoveries', 0)} · attente {value('world_waiting_target', '-')}"
+        + error("world_sync_error"),
+        f"Ennemis : {value('enemy_sync_status')}" + error("enemy_sync_error"),
+        f"Butins : {value('shared_loot_status')}" + error("shared_loot_error"),
+        f"Progression : {value('shared_progress_status')}" + error("shared_progress_error"),
+    ))
+
+
 def label(text, role="", parent=None):
     widget = QLabel(text, parent)
     widget.setTextFormat(Qt.TextFormat.PlainText)
@@ -124,6 +144,7 @@ class CoopPanel(QFrame):
         self.setMinimumSize(300, 240)
         self._last_logs = None
         self._logs = []
+        self._state = {}
         self._compact = None
         self._probe_ticket=None
         self.probe_finished.connect(self._joined_probe)
@@ -473,8 +494,9 @@ class CoopPanel(QFrame):
         self.show_message("Vous avez quitté le salon.")
 
     def copy_logs(self):
-        QApplication.clipboard().setText("\n".join(self._logs))
-        self.show_message("Journal copié.")
+        # One paste is enough to diagnose another PC: the journal, then each service's state.
+        QApplication.clipboard().setText("\n".join(self._logs) + "\n\n" + session_summary(self._state))
+        self.show_message("Journal et état des services copiés.")
 
     def show_message(self, text, error=False):
         self.message.setText(text)
@@ -484,6 +506,7 @@ class CoopPanel(QFrame):
         self.message.show()
 
     def update_state(self, state, logs):
+        self._state = state
         players = state.get("display_players", [])
         self.roster_widget.set_players(players)
         self.party_heading.setText(f"Vos compagnons  ·  {len(players)}/4")
