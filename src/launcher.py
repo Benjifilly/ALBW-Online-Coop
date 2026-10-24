@@ -512,9 +512,11 @@ def play(screen, arguments=()):
         if not link_ready(settings_at(azahar_config(status.emulator))):
             return False
         status.link_ready = True
+    emulator = None
     if not pid:
-        pid = subprocess.Popen([status.emulator, status.game], cwd=str(Path(status.emulator).parent),
-                               close_fds=True).pid
+        emulator = subprocess.Popen([status.emulator, status.game], cwd=str(Path(status.emulator).parent),
+                                    close_fds=True)
+        pid = emulator.pid
         print(f"\n  {GOLD}▶{RESET} {PALE}Azahar démarre avec ALBW.{RESET}")
         wait_for_game()
     try:
@@ -524,10 +526,11 @@ def play(screen, arguments=()):
         return False
     cursor(True)
     print(f"\n  {MUTED}Le compagnon s’ouvre. Fermer Azahar termine la session.{RESET}")
-    started = time.monotonic()
+    started, opened = time.monotonic(), time.time()
+    companion = None
     try:
-        subprocess.run([sys.executable, "-m", "src.main", *arguments, *link, "--emulator-pid", str(pid)],
-                       cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1"))
+        companion = subprocess.run([sys.executable, "-m", "src.main", *arguments, *link, "--emulator-pid", str(pid)],
+                                   cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1")).returncode
     except KeyboardInterrupt:
         pass
     finally:
@@ -535,9 +538,36 @@ def play(screen, arguments=()):
     # The companion leaves at once when this profile is already open.
     if time.monotonic() - started < 3:
         screen.say("Un compagnon est déjà ouvert : utilisez F8 dans Azahar.", "info")
-    else:
+    elif not report_crash(emulator, companion, opened):
         screen.say("Session terminée.", "ok")
+    else:
+        screen.say("Session interrompue : le journal du compagnon est dans .local\\logs.", "bad")
     return False
+
+
+CRASHES = {0xC0000005: "accès mémoire interdit", 0xC0000374: "corruption de sa mémoire",
+           0xC00000FD: "pile saturée", 0xC0000409: "dépassement de tampon"}
+
+
+def report_crash(emulator, companion, opened):
+    """Stop before the title screen erases the error: Azahar's crash code and the journal file."""
+    try:code = emulator.wait(timeout=3) if emulator else None
+    except subprocess.TimeoutExpired:code = None
+    code = code & 0xFFFFFFFF if isinstance(code, int) else None
+    crashed = code is not None and code >= 0xC0000000
+    if not crashed and companion in (0, None):
+        return False
+    print()
+    if crashed:
+        print(f"  {RED}✖ Azahar s’est fermé brutalement{RESET} {MUTED}(erreur 0x{code:08X}"
+              f"{' : ' + CRASHES[code] if code in CRASHES else ''}).{RESET}")
+    if companion not in (0, None):
+        print(f"  {RED}✖ Le compagnon s’est arrêté sur une erreur{RESET} {MUTED}(code {companion}).{RESET}")
+    logs = [p for p in (ROOT / ".local/logs").glob("companion-*.log") if p.stat().st_mtime >= opened - 1]
+    if logs:
+        print(f"  {MUTED}Journal du compagnon : {max(logs, key=lambda p: p.stat().st_mtime).relative_to(ROOT)}{RESET}")
+    ask("Entrée pour revenir au menu.")
+    return True
 
 
 def run():

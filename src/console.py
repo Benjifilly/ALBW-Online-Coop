@@ -1,6 +1,34 @@
 """Terminal output: Windows ANSI colours, the session header and live events."""
 import ctypes
+import os
+from pathlib import Path
 import sys
+import time
+
+LOG_DIR = Path(__file__).resolve().parents[1] / ".local" / "logs"
+KEEP_LOGS = 20
+
+
+class SessionLog:
+    """The companion's journal on disk, still readable after a crash of Azahar or the companion."""
+
+    def __init__(self, directory=LOG_DIR, keep=KEEP_LOGS):
+        self.path = None
+        try:
+            directory = Path(directory);directory.mkdir(parents=True, exist_ok=True)
+            old = sorted(directory.glob("companion-*.log"))
+            for stale in old[:max(0, len(old) - keep + 1)]:
+                stale.unlink(missing_ok=True)
+            self.path = directory / f"companion-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.log"
+        except OSError:
+            self.path = None
+
+    def write(self, text):
+        if self.path is None:return
+        try:
+            with open(self.path, "a", encoding="utf-8") as stream:stream.write(text.rstrip("\n") + "\n")
+        except OSError:
+            pass
 
 
 def _supports_color():

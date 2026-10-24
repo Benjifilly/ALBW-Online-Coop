@@ -175,7 +175,8 @@ class PublicAddress:
         return True
 
     def candidates(self):
-        return sorted(set(self.mapped.values()), key=lambda value: ":" not in value[0])
+        # IPv6 first, then a stable order: the room code changes only when an address does.
+        return sorted(set(self.mapped.values()), key=lambda value: (":" not in value[0], value))
 
     def symmetric(self):
         """Two IPv4 servers saw different ports: punching cannot predict this box."""

@@ -26,7 +26,7 @@ from src.memory.life_checkpoint import LifeCheckpoint
 from src.network.coop_node import CoopNetworkNode
 from src.overlay.azahar_overlay import AzaharNativeOverlay
 from src.rpc.azahar_bridge import AzaharBridge
-from src.console import print_banner, print_event, where
+from src.console import print_banner, print_event, where, SessionLog
 
 TUNIC_NAMES = {0: "green", 1: "blue", 2: "red", 3: "purple"}
 TUNIC_INDICES = {"green": 0, "blue": 1, "red": 2, "purple": 3}
@@ -43,6 +43,7 @@ class CoopOrchestrator(QObject):
         self.tunic_idx = 0
         self.logs: List[str] = []
         self._log_lock = threading.Lock()
+        self.session_log = SessionLog()
         self._memory_lock = threading.RLock()
         self._detection_status = None
         self._last_error = ""
@@ -97,6 +98,8 @@ class CoopOrchestrator(QObject):
             self.logs = self.logs[-200:]
             logs = list(self.logs)
         print_event(stamp, msg, lines)
+        if getattr(self, "session_log", None):
+            self.session_log.write("\n".join([f"{stamp}  {msg}", *("      " + line for line in lines)]))
         self.logs_changed.emit(logs)
 
     def get_ui_logs(self) -> List[str]:
@@ -441,6 +444,16 @@ def main() -> None:
     orchestrator = None if args.preview else CoopOrchestrator(bridge,args.profile,args.emulator_pid,
                                                            enemy_authority=args.enemy_authority)
     if orchestrator:
+        # Even a Python crash of the companion stays in its journal file.
+        import traceback
+        from src.version import VERSION
+        log = orchestrator.session_log
+        log.write(f"Session {VERSION} · {time.strftime('%d/%m/%Y')} · {' '.join(sys.argv[1:])}")
+        record = lambda kind, value, trace: log.write("".join(traceback.format_exception(kind, value, trace)))
+        previous = sys.excepthook
+        sys.excepthook = lambda *exc: (record(*exc), previous(*exc))
+        threading.excepthook = lambda hook: (record(hook.exc_type, hook.exc_value, hook.exc_traceback),
+                                             threading.__excepthook__(hook))
         orchestrator.online_progress.auto=args.host_progress
         saved_args=[]
         for key in ('profile','gdb_port','rpc_port','title_id','process_name'):
