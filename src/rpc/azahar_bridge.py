@@ -41,6 +41,8 @@ class AzaharBridge:
         self.port = port
         self.timeout = timeout
         self.retries = retries
+        self.retry_backoff = 1.0
+        self.native_recovery_timeout = 15.0
         self.version = CURRENT_REQUEST_VERSION
         self.max_data_size = MAX_REQUEST_DATA_SIZE
         self.attached_pid: Optional[int] = None
@@ -88,10 +90,12 @@ class AzaharBridge:
         # consume each other's replies. Irrelevant packets cannot extend the deadline.
         with self._lock:
             header, request_id = self._generate_header(request_type, len(request_data))
-            for _ in range(self.retries + 1):
+            for attempt in range(self.retries + 1):
                 try:
-                    self.socket.sendto(header + request_data, (self.address, self.port))
-                    deadline = time.monotonic() + self.timeout
+                    # Une ancienne préparation rejouée peut effacer un résultat natif.
+                    if attempt==0 or request_type!=RequestType.WriteMemory:
+                        self.socket.sendto(header + request_data, (self.address, self.port))
+                    deadline = time.monotonic() + self.timeout*self.retry_backoff**attempt
                     while (remaining := deadline - time.monotonic()) > 0:
                         self.socket.settimeout(remaining)
                         raw_reply, sender = self.socket.recvfrom(MAX_PACKET_SIZE)
@@ -103,11 +107,19 @@ class AzaharBridge:
                             return payload
                 except (socket.timeout, ConnectionResetError, OSError):
                     continue
+            failure=(f"{RequestType(request_type).name} sans réponse du port {self.port} "
+                     f"({self.retries + 1} attentes de {self.timeout:g} s"
+                     + (' à délai progressif)' if self.retry_backoff!=1 else ')'))
+            # Une écriture peut être faite sans que son ACK nous parvienne.
+            # Vérifier ses octets, jamais réécrire le paquet de préparation.
+            if request_type==RequestType.WriteMemory and self.attached_pid is not None and len(request_data)>=8:
+                address,size=struct.unpack_from('<II',request_data);pid=self.attached_pid
+                if size==len(request_data)-8:
+                    observed=self._request(RequestType.ReadMemory,struct.pack('<II',address,size))
+                    if self.attached_pid==pid and observed==request_data[8:]:return b''
             self.rpc_connected = False
             self.detection_status = "rpc_unavailable"
-            # For the journal's details: which request the game left unanswered.
-            self.last_failure = (f"{RequestType(request_type).name} sans réponse du port {self.port} "
-                                 f"({self.retries + 1} essais de {self.timeout:g} s)")
+            self.last_failure = failure
             self.detach()
             return None
 

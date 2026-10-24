@@ -9,7 +9,8 @@ from PyQt6.QtWidgets import QApplication, QAbstractButton, QGraphicsOpacityEffec
 
 from src.overlay.coop_panel import CoopPanel, TAB_SETTINGS
 from src.overlay.menu_widgets import MENU_STYLE, MorphButton
-from src.overlay.window_tracker import find_azahar_hwnd_and_pid, get_window_client_logical_rect, user32
+from src.overlay.window_tracker import (find_azahar_hwnd_and_pid,get_window_client_logical_rect,
+    game_is_foreground,raise_without_activation,user32)
 from src.overlay.player_hud import LifeBanner, PlayerHUD, normalize_hud, HUD_DEFAULTS
 from src.overlay.gamepad import SDLGamepads, ShortcutState, DEFAULT_BINDING, VALID_BUTTONS
 
@@ -317,7 +318,7 @@ class AzaharNativeOverlay(QWidget):
             self.gamepad_names = names
             self.sanctuary.settings_page.update_pad_status()
         foreground = user32.GetForegroundWindow()
-        active = self.isVisible() and foreground in (int(self.winId()), self.azahar_hwnd, int(self.player_hud.winId()))
+        active = self.isVisible() and game_is_foreground(self.azahar_hwnd,foreground,(int(self.winId()),int(self.player_hud.winId())))
         self._handle_gamepad_frame({ident: buttons for ident, (_, buttons) in devices.items()}, active)
 
     def _handle_gamepad_frame(self, devices, active):
@@ -426,9 +427,8 @@ class AzaharNativeOverlay(QWidget):
             return
         foreground = user32.GetForegroundWindow()
         mine = int(self.winId())
-        visible = foreground in (self.azahar_hwnd, mine, int(self.player_hud.winId()))
-        screen = self.screen()
-        geometry = get_window_client_logical_rect(self.azahar_hwnd, screen.devicePixelRatio() if screen else 1)
+        visible = game_is_foreground(self.azahar_hwnd,foreground,(mine,int(self.player_hud.winId())))
+        geometry = get_window_client_logical_rect(self.azahar_hwnd)
         if not visible or geometry is None:
             self.hide()
             self.player_hud.hide()
@@ -440,11 +440,16 @@ class AzaharNativeOverlay(QWidget):
             self._update_input_region()
         if self.geometry() != geometry:
             self.setGeometry(geometry)
+            self._next_raise=0
             self._layout_subscreen()
         if not self.isVisible():
             self.show()
         self._poll_hotkey(True)
         self._place_hud()
+        if now>=getattr(self,'_next_raise',0):
+            self._next_raise=now+.5
+            for window in (self.player_hud,self.life_banner,self):
+                if window.isVisible():raise_without_activation(int(window.winId()))
 
     def _poll_hotkey(self, active):
         down = bool(user32.GetAsyncKeyState(0x77) & 0x8000)

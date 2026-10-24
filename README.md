@@ -246,6 +246,29 @@ intacte : téléchargez alors un nouveau ZIP dans un autre dossier. Si une
 installation échoue, les anciens fichiers sont restaurés.
 </details>
 
+<details>
+<summary><b>Je suis connecté, mais Link reste vert et mon ami est invisible</b></summary>
+
+Vérifiez la version EUR du jeu et la liaison active sur l'écran d'accueil.
+À partir de la version <b>0.4.1</b>, une réponse locale perdue est vérifiée
+avant d'interrompre le rendu ; les appels déjà exécutés ne sont pas relancés.
+Un premier chargement ou la compilation des graphismes peut le retarder.
+Après mise à jour depuis une version qui restait bloquée, enregistrez puis
+fermez normalement Azahar et le compagnon avant de relancer
+<code>run_coop.bat</code>. Si le problème continue, copiez le journal avec
+<b>F8 → Journal → Copier</b> : il contient l'état des services.
+</details>
+
+<details>
+<summary><b>L'interface disparaît en plein écran sur mon autre écran</b></summary>
+
+La version <b>0.4.1</b> suit l'échelle du moniteur qui affiche Azahar,
+y compris si les deux écrans n'ont pas le même agrandissement Windows.
+Le HUD est maintenu au-dessus du jeu sans lui retirer le focus.
+Si votre mode plein écran le masque encore, repassez temporairement en
+fenêtre et indiquez les résolutions et les agrandissements des deux écrans.
+</details>
+
 Le **journal** du menu coop explique ce qui se passe et peut être copié pour
 signaler un problème.
 

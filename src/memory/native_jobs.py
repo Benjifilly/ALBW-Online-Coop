@@ -97,6 +97,12 @@ class _Request:
     result: object = None
     rejected: bool = False
     error: str = ''
+    prepared: bytes = b''
+    uncertain: bool = False
+    recovering: bool = False
+    recovery_until: float = 0
+    next_probe: float = 0
+    recovery_window: float = 15
 
 
 class _JobChannel:
@@ -113,8 +119,10 @@ class NativeRenderJobs:
         # particle request without stealing its eventual result.
         if not hasattr(trial,'_native_job_channel'):trial._native_job_channel=_JobChannel()
         self._channel=trial._native_job_channel
-        if any(self.bridge.read_memory(at,len(data))!=data for at,data in JOB_FINGERPRINTS.items()):
-            raise ValueError('Les fonctions de rendu ne correspondent pas au programme vérifié.')
+        for at,data in JOB_FINGERPRINTS.items():
+            observed=self.bridge.read_memory(at,len(data))
+            if observed is None:raise RuntimeError('Azahar ne répond pas pendant la vérification du rendu.')
+            if observed!=data:raise ValueError('Les fonctions de rendu ne correspondent pas au programme vérifié.')
 
     @property
     def pending(self):
@@ -134,28 +142,61 @@ class NativeRenderJobs:
         if not isinstance(timeout,(int,float)) or not 0<timeout<=60:
             raise ValueError('Délai de rendu invalide.')
 
+    def _waiting_transport(self,request):
+        if not request.recovering:request.recovery_until=time.monotonic()+request.recovery_window
+        request.recovering=True
+        if time.monotonic()>=request.recovery_until:
+            request.error='Azahar ne répond plus pendant l’appel ; son résultat reste réservé.'
+            raise RuntimeError(request.error)
+        return False
+
     def _resolve(self,request):
         if request.error:raise RuntimeError(request.error)
-        if self.bridge.attached_pid!=self.trial.pid or not self.trial.installed:
+        if not self.trial.installed:
+            request.error='Le jeu a changé pendant un appel en attente.'
+            raise RuntimeError(request.error)
+        if self.bridge.attached_pid is None and callable(getattr(self.bridge,'auto_attach_albw',None)):
+            self._waiting_transport(request)
+            if time.monotonic()<request.next_probe:return False
+            request.next_probe=time.monotonic()+.5
+            if not self.bridge.auto_attach_albw(force=True):return self._waiting_transport(request)
+        if self.bridge.attached_pid!=self.trial.pid:
             request.error='Le jeu a changé pendant un appel en attente.'
             raise RuntimeError(request.error)
         if request.result is not None:return True
         # Read the commit before judging its age. A transition can delay the
         # Python poll even though the exact native request already returned.
-        reply=self.bridge.read_memory(JOBBOX+8,0x40)
-        if (reply and len(reply)==0x40 and struct.unpack_from('<I',reply)[0]==request.sequence
+        raw=self.bridge.read_memory(JOBBOX,0x48)
+        if not raw or len(raw)!=0x48:return self._waiting_transport(request)
+        if request.uncertain or request.recovering:
+            if raw[:4]!=request.prepared[:4] or raw[0xC:0x38]!=request.prepared[0xC:0x38]:
+                request.error='La file du rendu a changé pendant la coupure ; aucun appel rejoué.'
+                raise RuntimeError(request.error)
+        reply=raw[8:]
+        published,acked=struct.unpack_from('<2I',raw,4)
+        if (acked==request.sequence and published==request.sequence
                 and self.bridge.read_u32(JOBBOX+4)==request.sequence
                 and struct.unpack_from('<I',reply,0x3C)[0]==0):
             request.result=struct.unpack_from('<2I',reply,0x30)
             request.rejected=bool(struct.unpack_from('<I',reply,0x38)[0])
             if self._channel.pending is request:self._channel.pending=None
             return True
+        if self.bridge.attached_pid is None:return self._waiting_transport(request)
+        if request.uncertain and published==0 and acked==0 and struct.unpack_from('<I',raw,0x44)[0]==0:
+            # La préparation est intacte, mais pas publiée : même numéro, aucun ACK effacé.
+            self._waiting_transport(request)
+            frame=self.bridge.read_u32(MAILBOX+0x50)
+            request.start_frame=frame if type(frame) is int and frame>0 else None
+            if self.bridge.write_u32(JOBBOX+4,request.sequence):request.uncertain=False
+            return False
         # A pause/scroll without owner callbacks must not spend the execution
         # budget. A genuinely expired, unacknowledged request stays uncertain;
         # even a later ACK cannot silently clear that recorded failure.
         frame=self.bridge.read_u32(MAILBOX+0x50) if request.start_frame is not None else None
+        if self.bridge.attached_pid is None:return self._waiting_transport(request)
         age=((frame-request.start_frame)&0xFFFFFFFF) if type(frame) is int else None
-        expired=(age>request.frame_budget) if age is not None else time.monotonic()>=request.deadline
+        deadline=request.recovery_until if request.recovering or request.uncertain else request.deadline
+        expired=(age>request.frame_budget) if age is not None else time.monotonic()>=deadline
         if expired:
             request.error='L’appel de rendu n’a pas terminé ; aucune relance automatique.'
             raise RuntimeError(request.error)
@@ -175,11 +216,11 @@ class NativeRenderJobs:
             if not self.bridge.write_memory(JOBBOX,data):raise RuntimeError('Préparation de l’appel impossible.')
             frame=self.bridge.read_u32(MAILBOX+0x50)
             request=_Request(self._channel,sequence,time.monotonic()+timeout,
-                             frame if type(frame) is int and frame>0 else None,max(1,math.ceil(timeout*60)))
+                             frame if type(frame) is int and frame>0 else None,max(1,math.ceil(timeout*60)),
+                             prepared=bytes(data),recovery_window=max(timeout,getattr(self.bridge,'native_recovery_timeout',15.0)))
             self._channel.pending=request
             if not self.bridge.write_u32(JOBBOX+4,sequence):
-                request.error='Publication de l’appel incertaine.'
-                raise RuntimeError(request.error)
+                request.uncertain=True
             return request
 
     def poll(self,request):

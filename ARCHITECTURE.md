@@ -35,12 +35,32 @@ d'un retrait. Sans ce pont, seuls les cœurs et la liste des joueurs
 fonctionnent. L'essai à deux prépare des copies portables avec un port RPC
 privé.
 
-Azahar répond au RPC depuis sa boucle d'émulation : un chargement ou une
-compilation de shaders la bloque. Le pont tolère environ une seconde sans
-réponse avant de se détacher ; le rendu interrompu redémarre ensuite seul,
+Un chargement ou une compilation de shaders peut retarder les réponses RPC.
+Le pont attend progressivement 0,25, 0,5, 1 puis 2 secondes, sans coût
+supplémentaire lorsqu'une réponse arrive normalement. Une écriture n'est
+envoyée qu'une fois : si son accusé est perdu, une lecture vérifie ses octets
+avant de la déclarer réussie. Répéter une ancienne préparation pourrait
+effacer le résultat d'un appel natif.
+
+Une publication native incertaine garde son numéro et ses arguments. Après
+reconnexion au même processus, sa préparation doit correspondre exactement :
+un résultat acquitté est récupéré ; si seul le numéro manque, seul ce numéro
+est republié, sans effacer l'acquittement. Un autre processus, une autre
+préparation ou une coupure prolongée conserve la barrière de sécurité. La
+reprise tolère environ quinze secondes de coupure locale, avec les délais
+RPC bornés ; une pause saine ne consomme pas ce budget. Une empreinte
+illisible est distinguée d'un programme incompatible.
+
+Le rendu interrompu redémarre ensuite seul,
 trois fois au plus par session, cinq secondes après la coupure. Le journal
 garde sous chaque problème ses détails (origine dans le code, dernière requête
 restée sans réponse), affichés par « Problèmes » et inclus par « Copier ».
+
+L'overlay associe le moniteur Windows d'Azahar à son écran Qt. Il convertit
+les décalages à l'intérieur de ce moniteur, sans diviser l'origine du bureau
+virtuel par l'échelle d'un autre écran. Les fenêtres du HUD restent au-dessus
+du plein écran par un placement sans activation ni changement de géométrie,
+seulement quand Azahar ou l'overlay est au premier plan.
 
 ## Code natif
 
