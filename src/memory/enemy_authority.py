@@ -54,7 +54,9 @@ class EnemyAuthority:
                     self.health=NativeEnemyHealth(world,self.memory.player_ptr)
                 self.health.poll()
                 self.sync.health_writer=lambda info,target,command,profile=0:self.health.write(info,target,command,context,profile)
-            except (ValueError,RuntimeError,OSError) as exc:
+            # A broken install stops only the enemies, never the whole sync step
+            # (25/10: a missing module interrupted the game reading every frame).
+            except (ValueError,RuntimeError,OSError,ImportError) as exc:
                 self.error=str(exc);self.state='error';return
         room=context[0];receipts=self.receipts;self.receipts=[]
         # Before the first ledger frame: still report and queue local losses.

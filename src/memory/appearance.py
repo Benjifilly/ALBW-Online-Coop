@@ -395,6 +395,7 @@ class InGameAppearance:
             if self.painting and not self.painting.hide():
                 raise RuntimeError('La peinture du compagnon ne peut pas être masquée.')
             return False
+        if self.painting and self.painting.stale():self._rebuild_painting()
         if self.painting is None:
             from src.memory.wall_model import PrivateWallModel
             self.painting=PrivateWallModel(self.trial,player,room)
@@ -410,6 +411,7 @@ class InGameAppearance:
         """
         now=time.monotonic()
         if now<self._prewarm_retry:return
+        if self.painting and self.painting.stale():self._rebuild_painting()
         if self.painting is None:
             from src.memory.wall_model import PrivateWallModel
             self.painting=PrivateWallModel(self.trial,player,room)
@@ -427,6 +429,14 @@ class InGameAppearance:
                 if not self._prewarm_retry:self.log('Peinture du compagnon pas encore préparable : '+str(exc))
                 self._prewarm_retry=now+10
             return
+
+    def _rebuild_painting(self):
+        """This Link's own wall resources changed (a continue, a reload): the
+        painting borrowed them, so it is removed and prepared again from the new
+        ones. The frame hook already hides it (wall_model.arm)."""
+        if not self.painting.close():raise RuntimeError('La peinture du compagnon attend son retrait.')
+        self.painting=None;self._prewarm_retry=0
+        self.log('Ressources murales de votre héros renouvelées : peinture du compagnon reconstruite.')
 
     def _publish_effects(self,peer,player,room):
         if not self._effects_supported:return

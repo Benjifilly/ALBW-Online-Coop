@@ -145,13 +145,18 @@ def payload_source():
     return source.replace('__ATTACK_PROFILE_TABLE__','\n'.join(rows))
 
 
+def compile_payload():
+    """Development only (keystone): the versioned enemy_impact_trial.bin comes from here."""
+    from keystone import Ks, KS_ARCH_ARM, KS_MODE_ARM
+    machine, _ = Ks(KS_ARCH_ARM,KS_MODE_ARM).asm(payload_source(),addr=0)
+    return bytes(machine)
+
+
 @lru_cache(maxsize=1)
 def assembled_payload():
-    """Compile once at zero; all internal references remain position independent."""
-    from keystone import Ks, KS_ARCH_ARM, KS_MODE_ARM
-    source=payload_source()
-    machine, _ = Ks(KS_ARCH_ARM,KS_MODE_ARM).asm(source,addr=0)
-    result = bytes(machine)
+    """Assembled at zero; all internal references remain position independent.
+    Players have no assembler (24/10: every frame stopped on the missing keystone)."""
+    result = Path(__file__).with_suffix('.bin').read_bytes()
     if len(result) > CONTROL_OFFSET:
         raise ValueError('Trial payload overlaps its private control')
     if result.count(SWORD_DESC) != 1:

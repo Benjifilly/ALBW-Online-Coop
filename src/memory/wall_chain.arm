@@ -1,0 +1,27 @@
+@ Copied by wall_model.py into its private reserve, called by wall_model.arm
+@ for a painting descriptor (r4). A painting borrows the local Link's wall
+@ resources; a continue rebuilds the same Player at the same address before
+@ they load again (25/10: crash in 6905B4 on a freed animation, while the
+@ companion entered a wall and this Link was a spectator). The pairs
+@ (address, value) at +C8, count at +C4, are checked in order: each address
+@ lies in the object the previous pair just proved current.
+@ Returns Z set when one differs (hide, evaluate nothing). Uses r0-r3, r12.
+.syntax unified
+.arm
+ldr r12, [r4, #0xc4]
+sub r12, r12, #1
+cmp r12, #6
+bhs chain_stale
+add r3, r4, #0xc8
+chain_next:
+ldm r3!, {r0, r1}
+ldr r0, [r0]
+cmp r0, r1
+bne chain_stale
+subs r12, r12, #1
+bpl chain_next
+movs r0, #1
+bx lr
+chain_stale:
+movs r0, #0
+bx lr

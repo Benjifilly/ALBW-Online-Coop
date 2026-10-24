@@ -1,10 +1,16 @@
 """Private FlatLink prototype. Explicit use only; not enabled by the normal UI."""
 import struct
+from pathlib import Path
 
 from src.memory.native_jobs import NativeRenderJobs,NativeJobRejected,RenderJob as Job,PRIVATE_SIZE
 from src.memory.remote_model import MAILBOX
 from src.memory.render_state import _heap
 from src.memory.wall_state import validate_wall_state
+
+# wall_chain.arm, in the reserve's first page (free after the descriptors):
+# the frame hook calls it before evaluating a painting's borrowed animations.
+CHAIN_OFFSET=0xC00
+CHAIN_CODE=Path(__file__).with_name('wall_chain.bin').read_bytes()
 
 
 class PrivateWallModel:
@@ -44,6 +50,11 @@ class PrivateWallModel:
         fields=self._read(wall+0x28+variant*0x28,16) if _heap(wall) else None
         if not fields:raise RuntimeError('Entrez une fois dans un mur pour charger les ressources de peinture.')
         root,*anims=struct.unpack('<4I',fields)
+        # The borrowed chain, each address inside the object proved just before
+        # it (wall_chain.arm checks it every frame, stale() every step).
+        slot=wall+0x28+variant*0x28
+        chain=[(self.player+0x604,controller),(controller+0x28,wall),(slot,root),
+               *((slot+4+4*i,anim) for i,anim in enumerate(anims))]
         if not _heap(root) or b.read_u32(root)!=0x6EBEF0:
             raise RuntimeError('Cette variante murale n’est pas chargée.')
         resource=b.read_u32(root+0x50)
@@ -89,7 +100,19 @@ class PrivateWallModel:
         capacity=b.read_u32(renderer+0x60) if _heap(renderer) else None
         if used is None or capacity is None or capacity-used<4 or not b.read_u32(renderer+0x68):
             raise RuntimeError('Le moteur n’a pas assez de places de rendu libres.')
-        return dict(root=root,resource=resource,count=count,budget=budget,animations=animation_resources)
+        return dict(root=root,resource=resource,count=count,budget=budget,animations=animation_resources,chain=chain)
+
+    def stale(self):
+        """The local wall resources a prepared painting borrows were replaced or freed.
+
+        A continue rebuilds the same Player at the same address, and its wall
+        resources load only on its next merge (25/10: a spectator crashed when
+        the companion entered a wall).
+        """
+        for item in self.models.values():
+            for address,value in item['chain']:
+                if self.bridge.read_u32(address)!=value:return True
+        return False
 
     def reserve(self):
         result,pointer=self.jobs.call(Job.RESERVE)
@@ -99,6 +122,7 @@ class PrivateWallModel:
         data=bytearray(0x1000)
         struct.pack_into('<2I',data,0,0x6F5988,pointer+0x20)
         data[0x20:0x2A]=b'CoopWall\0\0'
+        data[CHAIN_OFFSET:CHAIN_OFFSET+len(CHAIN_CODE)]=CHAIN_CODE
         self._write(pointer,data)
         self.uncertain=True
         try:
@@ -137,7 +161,7 @@ class PrivateWallModel:
             raise
         if not self.heap<=model<self.allocation+PRIVATE_SIZE or self.bridge.read_u32(model+4)!=self.heap:
             raise RuntimeError('Le modèle mural n’appartient pas à sa réserve.')
-        self.models[variant]=dict(model=model,animations=[],phase_ids=[None]*3,
+        self.models[variant]=dict(model=model,animations=[],phase_ids=[None]*3,chain=source['chain'],
             resource_counts=[len(resources) for _,resources in source['animations']],meshes=list(state['meshes']))
         self.uncertain=False
         self.jobs.call(Job.REGISTER,model,0,0,heap=self.heap)
@@ -192,7 +216,7 @@ class PrivateWallModel:
         if item.get('published_phases')!=phases:
             self.sequence=(self.sequence+1)&0xFFFFFFFF
             item['published_phases']=phases;item['sequence']=self.sequence
-        control=bytearray(0xC0)
+        control=bytearray(0xF8)
         struct.pack_into('<7I',control,0,0x57414C4C,lease,1,item['model'],*item['animations'])
         struct.pack_into('<2I',control,0x1C,item['sequence'],self.allocation+0x900+variant*4)
         struct.pack_into('<12f3f',control,0x24,*state['matrix'],*state['scale'])
@@ -215,6 +239,9 @@ class PrivateWallModel:
             self._write(self.bridge.read_u32(self.fresco.rtt+0x3C),b'\xff'*65536)
         struct.pack_into('<2I',control,0xB0,self.fresco.model,self.fresco.rtt)
         struct.pack_into('<2f',control,0xB8,*state['surface'].get('uv_transform',[1.,0.]))
+        chain=item['chain']
+        struct.pack_into(f'<2I{2*len(chain)}I',control,0xC0,self.allocation+CHAIN_OFFSET,len(chain),
+                         *(v for pair in chain for v in pair))
         # Never overwrite the descriptor being consumed by the frame hook.
         address=self.allocation+(0x800 if self.control==self.allocation+0x100 else 0x100)
         self._write(address,control)

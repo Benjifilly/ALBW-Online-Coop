@@ -25,7 +25,9 @@ FAIRY=154
 CONTINUE=155
 # Standing or walking: the only actions a spectator is frozen in (player_life.arm).
 IDLE=(0,1)
-VANE_TYPE=280
+# Hyrule's and Lorule's weathervanes: two profiles of the same native class
+# (25/10: Lorule's, type 281 beside Benji in (1,26), revived nobody).
+VANE_TYPES=frozenset((280,281))
 VANE_VTABLE=0x6CFC28
 VANE_STATE=0x78C
 VANE_SAVE=2
@@ -131,7 +133,7 @@ class LifeSynchronizer:
             from src.memory.world_actors import ActorSurvey
             try:
                 table=self.bridge.read_u32(self.bridge.read_u32(0x706E20)+0x3DBC0)
-                found=[a for a in ActorSurvey(self.bridge).read(room)['actors'] if a['type']==VANE_TYPE]
+                found=[a for a in ActorSurvey(self.bridge).read(room)['actors'] if a['type'] in VANE_TYPES]
                 self.vanes=[self.bridge.read_u32(table+(a['handle']>>22)*4) for a in found]
             except (ValueError,TypeError,OSError):self.vanes=[]
             self.vane_room=room;self.survey_after=now+SURVEY_EVERY

@@ -218,7 +218,7 @@ class PrivateFrescoModel:
         for key,stride,field in (('positions',9,'pos_ptr'),('vectors',9,'vec_ptr'),('uv',6,'uv_ptr')):
             self._write(slot[field],struct.pack(f'<{count*stride}f',*state[key]))
         stage=self.allocation+0x700
-        if control_address and not self.allocation<=control_address<=self.allocation+0x1000-0xC0:
+        if control_address and not self.allocation<=control_address<=self.allocation+0x1000-0xF8:
             raise ValueError('Descripteur Fresco hors de sa réserve.')
         self._write(stage,struct.pack('<2I24f3I',index,count,*state['matrix'],*state['projection_matrix'],int(self.view_correction),control_address,self.model))
         if queued:

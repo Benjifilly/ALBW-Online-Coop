@@ -1,5 +1,6 @@
 @ Private painting presentation. Control block is created locally, never from
-@ a network address. Every native pointer belongs to its separate render heap.
+@ a network address. Every native pointer belongs to its separate render heap,
+@ except the local wall resources a painting borrows (wall_chain.arm).
 .syntax unified
 .arm
 .fpu vfpv2
@@ -39,8 +40,9 @@ cmpne r0, #0x5f
 bne wall_hide
 @ Descriptor mode 0 is held equipment. The body and both weapons must obey
 @ the same wall state even while Python waits for a valid projected surface.
-ldr r0, [r4, #0xa0]
-cmp r0, #0
+@ r10 keeps the mode until the transform below (the checker preserves it).
+ldr r10, [r4, #0xa0]
+cmp r10, #0
 bne wall_check_enabled
 ldr r0, [r8, #0x168]
 ldr r1, [r0]
@@ -50,6 +52,13 @@ ldreq r0, [r0, #0x1c]
 cmpeq r0, #1
 beq wall_hide
 wall_check_enabled:
+@ A painting (mode 2+) borrows the local Link's wall resources: its own
+@ checker (wall_chain.arm, at +C0 in the private reserve) sets Z when they
+@ were replaced, and nothing is evaluated.
+cmp r10, #2
+ldrhs r12, [r4, #0xc0]
+blxhs r12
+beq wall_hide
 ldr r0, [r4, #8]
 cmp r0, #0
 beq wall_hide
@@ -74,11 +83,10 @@ str r0, [r5, #0x164]
 @ previously verified transform behavior (descriptor mode 0).
 @ Mode 1 (items, projectiles) carries the source G3D's own lean at +BC: a
 @ native bomb uses 1.0 and leans toward the camera; held tools keep 0.
-ldr r0, [r4, #0xa0]
-cmp r0, #1
+cmp r10, #1
 ldreq r0, [r4, #0xbc]
 movhi r0, #0
-ldrlo r0, =0x3f800000
+movlo r0, #0x3f800000
 str r0, [r5, #0x134]
 ldr r0, [r4, #0x1c]
 ldr r2, [r4, #0x20]
