@@ -14,7 +14,7 @@ sur disque.
 | Liaison jeu | `src/rpc/` (RPC Azahar, GDB, pont hybride) |
 | Lecture d'état | `src/memory/albw_state.py`, `gameplay_state.py`, `world_actors.py`, `enemy_sync.py` |
 | Réseau | `src/network/coop_node.py` (salon, protocole 20), `datagrams.py`, `world_journal.py` (props), `shared_loot.py`, `shared_progress.py`, `enemy_frames.py`, `enemy_hub.py` |
-| Connexion | `src/network/probe.py` (test sans rejoindre), `reachability.py` (adresses et UPnP), `quality.py` (latence et pertes de sondes) |
+| Connexion | `src/network/probe.py` (test sans rejoindre), `rendezvous.py` (codes de salon, STUN, perçage), `reachability.py` (adresses et UPnP), `quality.py` (latence et pertes de sondes) |
 | Import de progression | `src/network/save_transfer.py`, `src/online_progress.py`, `src/online_saves.py`, `src/save_import.py` |
 | Rendu du compagnon | `remote_model`, `appearance`, `equipment_model`, `wall_model`, `fresco_*`, `effect_*`, `render_state` |
 | Monde partagé | `world_sync.py` (orchestration), `world_native.py` (réserve et anneau natif), `mass_state.py` (lecteur), `foliage_motion.py`, `capture_hooks.py`, `grass_restore.py`, `combat_log.py` |
@@ -119,6 +119,27 @@ L'adresse publique annoncée par la box n'est pas une preuve d'accessibilité
 depuis Internet ; le test de l'ami reste nécessaire. La qualité affichée est
 une estimation sur les dernières sondes acquittées, pas une mesure de tous
 les paquets du jeu.
+
+### Se rejoindre sans serveur (`src/network/rendezvous.py`)
+
+Le salon utilise un seul socket double pile (IPv6 avec IPv4 associé) ; les
+adresses restent des couples `(ip, port)`, l'IPv4 associée est ramenée à sa
+forme habituelle. Des requêtes STUN publiques (Google, Cloudflare) partent de
+ce socket même, toutes les 20 s, pour connaître l'adresse que voit Internet
+et garder ouverte la traduction de la box. Deux serveurs IPv4 qui voient deux
+ports différents signalent une box « symétrique ».
+
+Le code de salon (`ALBW-…`, base32 avec somme de contrôle) liste jusqu'à six
+chemins : publics d'abord (IPv6, STUN, UPnP), réseau local ensuite. Le client
+envoie son HELLO à tous les chemins toutes les demi-secondes ; ces envois
+ouvrent aussi sa propre box. La première réponse portant le nonce secret de
+la tentative fixe l'hôte, quel que soit le chemin (adresse source IPv6
+différente, autre port). Le même compagnon arrivé par un second chemin n'est
+pas un doublon. Si la box de l'hôte filtre, le client affiche un code de
+réponse ; l'hôte le colle et envoie des paquets `PUNCH` vers ces chemins
+pendant 45 s. Sans relais, deux box symétriques en IPv4 restent injoignables ;
+l'IPv6, sans traduction d'adresse, évite ce cas sur la plupart des réseaux
+mobiles. Protocole 21.
 
 ## Import de la progression enregistrée
 

@@ -86,12 +86,12 @@ depuis le lanceur.
     <td valign="top">
       1. Lancez <code>run_coop.bat</code> → <b>Héberger un salon</b><br>
       2. Chargez votre sauvegarde et enregistrez à une girouette<br>
-      3. Dans le menu coop (<b>F8 → Salon</b>), choisissez l'adresse adaptée et cliquez sur <b>Copier</b><br>
-      4. Envoyez cette adresse à vos amis et gardez le salon ouvert
+      3. Dans le menu coop (<b>F8 → Salon</b>), cliquez sur <b>Copier le code</b> : le <b>code de salon</b> (<code>ALBW-…</code>) est aussi écrit dans le journal<br>
+      4. Envoyez ce code à vos amis et gardez le salon ouvert
     </td>
     <td valign="top">
       1. Lancez <code>run_coop.bat</code> → <b>Rejoindre un ami</b><br>
-      2. Collez l'adresse de l'hôte, par exemple <code>100.80.12.34</code> ou <code>100.80.12.34:45990</code> ; elle est testée avant d'entrer<br>
+      2. Collez le code de salon de l'hôte (une adresse comme <code>192.168.1.24</code> marche aussi)<br>
       3. Choisissez de garder votre partie ou de <b>rejoindre avec la progression de l'hôte</b><br>
       4. Chargez le fichier choisi dans Azahar
     </td>
@@ -99,18 +99,22 @@ depuis le lanceur.
 </table>
 
 > [!TIP]
-> **Pas sur le même réseau ?** Le salon utilise le port **UDP 45990**. Le plus
-> simple : installez tous **[Tailscale](https://tailscale.com/)**, connectez
-> vos PC au même réseau Tailscale (ou partagez le PC de l'hôte avec votre ami),
-> puis utilisez l'adresse **Tailscale** affichée chez l'hôte. ZeroTier et
-> Radmin VPN sont aussi reconnus. Sur le même Wi-Fi, utilisez **Réseau local**.
+> **Pas sur le même réseau ? Rien à installer.** Le code de salon contient
+> tous les chemins vers l'hôte : IPv6, adresse Internet vue par un serveur
+> public STUN, ouverture UPnP de sa box et réseau local. Le compagnon de
+> l'ami les essaie tous à la fois.
+>
+> Si la box de l'hôte bloque, l'ami voit un **code de réponse** dans son
+> journal et dans **F8 → Salon** : il l'envoie à l'hôte, qui le colle dans
+> **Code de réponse d'un ami → Ouvrir le passage**. Les deux PC s'envoient
+> alors des paquets en même temps et les box les laissent passer (perçage de NAT).
 
-Le mod tente d'ouvrir automatiquement le port sur la box de l'hôte par
-**UPnP**. S'il affiche une adresse **Internet · UPnP**, demandez à votre ami
-de la tester : certaines connexions ne permettent pas de recevoir directement
-des connexions. Sinon, utilisez Tailscale ou redirigez **UDP 45990** vers
-le PC de l'hôte dans les réglages de sa box. Autorisez Python dans le
-pare-feu Windows si celui-ci le demande.
+Ça marche avec la grande majorité des box, et en 4G/5G dès que l'opérateur
+fournit l'IPv6 (c'est le cas des principaux opérateurs français). Sans
+serveur relais, un seul cas reste impossible : deux connexions IPv4 dont la
+box change de port à chaque destination (le menu Salon le signale). Changez
+alors d'hôte, ou utilisez un VPN comme Tailscale, toujours reconnu.
+Autorisez Python dans le pare-feu Windows s'il le demande.
 
 ### Rejoindre avec la progression de l'hôte
 
@@ -186,12 +190,13 @@ titre.
 <details>
 <summary><b>Rien ne se connecte</b></summary>
 
-Vérifiez que l'écran d'accueil indique la liaison active, que l'adresse de
-l'hôte est la bonne et que le port UDP 45990 est joignable chez lui (ou que
-vous êtes tous sur le même réseau Tailscale). Dans Tailscale, le PC de l'hôte
-doit être accessible à l'ami. Utilisez son adresse en <code>100.…</code>, pas
-son adresse Wi-Fi si vous jouez à distance. Le test avant connexion indique
-si le salon répond ; regardez aussi le pare-feu Windows de l'hôte.
+Vérifiez que l'écran d'accueil indique la liaison active et que le code de
+salon a été copié en entier. Si l'ami attend sans entrer, envoyez son
+<b>code de réponse</b> à l'hôte, qui le colle dans <b>F8 → Salon</b> et clique
+sur <b>Ouvrir le passage</b> dans les 45 secondes. Si le menu Salon signale une
+box qui change de port, essayez avec l'autre joueur comme hôte. Un code
+change quand la box redémarre : recopiez-le avant chaque partie. Regardez
+aussi le pare-feu Windows de l'hôte.
 </details>
 
 <details>

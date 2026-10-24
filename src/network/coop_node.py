@@ -20,9 +20,11 @@ from src.network.shared_progress import HostProgressJournal,ClientProgressJourna
 from src.version import VERSION,mismatch
 from src.network.quality import LinkQuality
 from src.network.datagrams import Datagrams,encode as datagrams
+from src.network import rendezvous
 
 DEFAULT_COOP_UDP_PORT = 45990
-PROTOCOL_VERSION = 20
+PROTOCOL_VERSION = 21
+PUNCH_SECONDS = 45        # how long the host opens its box toward a friend's reply code
 MAX_PLAYERS = 4
 PEER_TIMEOUT = 6.0
 MAX_DATAGRAM = 16384
@@ -112,6 +114,10 @@ class CoopNetworkNode:
         self.save_transfer=SaveTransfer(self)
         self._sock = self._thread = None
         self._datagrams=Datagrams()
+        # One IPv6 socket also carries IPv4 (dual stack); endpoints stay (ip, port).
+        self._dual=False
+        self.public=rendezvous.PublicAddress()
+        self._candidates=[];self._punches={};self._next_punch=0
         self._running = False
         self.mode = "offline"
         self.bind_port = DEFAULT_COOP_UDP_PORT
@@ -164,18 +170,46 @@ class CoopNetworkNode:
         if not _integer(port, 0, 65535):
             return False
         self.stop()
+        sock=None;dual=False
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind(("0.0.0.0", port))
+            # IPv6 reaches most mobile connections without address translation.
+            sock=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM)
+            sock.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,0)
+            sock.bind(("::",port));dual=True
+        except (OSError,AttributeError):
+            if sock:sock.close()
+            sock=None
+        try:
+            if sock is None:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.bind(("0.0.0.0", port))
             sock.settimeout(.05)
         except OSError as exc:
-            if "sock" in locals():
+            if sock:
                 sock.close()
             self._log(f"Impossible d’ouvrir le salon : {exc}")
             return False
-        self._sock, self.mode, self._running = sock, mode, True
+        self._sock, self.mode, self._running, self._dual = sock, mode, True, dual
         self.bind_port = sock.getsockname()[1]
+        self.public=rendezvous.PublicAddress();public=self.public
+        def resolve():
+            targets=rendezvous.resolve_servers()
+            with self._lock:public.targets=[t for t in targets if dual or ':' not in t[1][0]]
+        threading.Thread(target=resolve,daemon=True).start()
         return True
+
+    def _sockaddr(self,endpoint):
+        """Socket address of an (ip, port) endpoint, or None if this socket cannot reach it."""
+        try:host,port=rendezvous.endpoint(*endpoint)
+        except (ValueError,TypeError):return None
+        if ':' in host:return (host,port,0,0) if self._dual else None
+        return ('::ffff:'+host,port,0,0) if self._dual else (host,port)
+
+    def _send_raw(self,data,endpoint):
+        target=self._sockaddr(endpoint);sock=self._sock
+        if sock and self._running and target:
+            try:sock.sendto(data,target)
+            except OSError:pass
 
     def _start_worker(self):
         # Capture the socket; a previous worker can never read a replacement socket.
@@ -194,18 +228,54 @@ class CoopNetworkNode:
     def join_host(self, host_ip, host_port=DEFAULT_COOP_UDP_PORT, local_port=0):
         if not isinstance(host_ip, str) or not _integer(host_port, 1, 65535):
             return False
+        return self.join_candidates([(host_ip, host_port)], local_port)
+
+    def join_candidates(self, candidates, local_port=0, label=None):
+        """Every address of a room code is tried at once; the host's answer picks one."""
         try:
-            socket.inet_pton(socket.AF_INET, host_ip)
-        except OSError:
+            clean=[]
+            for value in candidates:
+                key=rendezvous.endpoint(*value)
+                if not _integer(key[1],1,65535):return False
+                if key not in clean:clean.append(key)
+        except (ValueError, TypeError):
+            return False
+        if not clean or len(clean)>rendezvous.MAX_CANDIDATES:
             return False
         if not self._start(local_port, "client"):
             return False
-        self.host_target = (host_ip, host_port)
+        self._candidates=clean
+        self.host_target = clean[0] if len(clean)==1 else None
         self._join_nonce = secrets.token_hex(16)
         self.connection_state = "connecting"
         self._start_worker()
-        self._log(f"Connexion à {host_ip}:{host_port}…")
+        self._log(f"Connexion à {label or rendezvous.format_endpoint(clean[0])}…")
         return True
+
+    def punch(self, candidates):
+        """Host: send to a friend's reply code so this box lets its packets in."""
+        with self._lock:
+            if self.mode!='host':return 0
+            until=time.monotonic()+PUNCH_SECONDS
+            for value in candidates[:rendezvous.MAX_CANDIDATES]:
+                try:self._punches[rendezvous.endpoint(*value)]=until
+                except (ValueError,TypeError):continue
+            self._next_punch=0
+            return len(self._punches)
+
+    def reply_code(self):
+        """Client: what the host pastes when its box filters this friend."""
+        with self._lock:
+            return rendezvous.encode(rendezvous.REPLY,self.public.candidates()) if self.mode=='client' else ''
+
+    def public_candidates(self):
+        with self._lock:return self.public.candidates()
+
+    def nat_note(self):
+        with self._lock:
+            if self.public.symmetric():
+                return 'Cette box change de port à chaque destination : préférez l’IPv6 ou un autre hôte.'
+            return ''
 
     def stop(self):
         sock, worker = self._sock, self._thread
@@ -224,6 +294,7 @@ class CoopNetworkNode:
             self._thread = None
             self.mode = self.connection_state = "offline"
             self.host_target = None
+            self._candidates=[];self._punches={};self.public=rendezvous.PublicAddress()
             self.session_id = ""
             self.peers.clear()
             self._members.clear()
@@ -282,8 +353,9 @@ class CoopNetworkNode:
                         if rows is None:break
                         rows.pop()
                         raw=json.dumps(dict(payload,v=PROTOCOL_VERSION),separators=(',',':'),allow_nan=False).encode('utf-8')
-            if len(raw) <= MAX_DATAGRAM:
-                for part in datagrams(raw):sock.sendto(part, endpoint)
+            target=self._sockaddr(endpoint)
+            if len(raw) <= MAX_DATAGRAM and target:
+                for part in datagrams(raw):sock.sendto(part, target)
         except (OSError, ValueError, TypeError):
             pass
 
@@ -594,12 +666,22 @@ class CoopNetworkNode:
                     self.shared_health = None
                     self.connection_state = "connecting"
                     self._log("Liaison perdue. Reconnexion automatique…")
-                if self.connection_state in ('connecting','duplicate') and now - self._last_hello >= 1:
+                if self.connection_state in ('connecting','duplicate') and now - self._last_hello >= .5:
+                    # Every path of the room code at once: each HELLO also opens
+                    # this box toward the host for its answer (NAT punching).
                     self._last_hello = now
-                    self._send_packet({"type": "HELLO", "nonce": self._join_nonce,
+                    hello={"type": "HELLO", "nonce": self._join_nonce,
                         "build":self.version,
                         "enemy_authority":self.enemy_authority,
-                        "player": dict(self._own_state,name=self.player_name,tunic_color=self.tunic_color)}, self.host_target)
+                        "player": dict(self._own_state,name=self.player_name,tunic_color=self.tunic_color)}
+                    for endpoint in dict.fromkeys([self.host_target,*self._candidates]):
+                        if endpoint:self._send_packet(hello,endpoint)
+            if self.mode=='host' and self._punches and now>=self._next_punch:
+                self._next_punch=now+.5
+                self._punches={key:until for key,until in self._punches.items() if until>now}
+                for endpoint in self._punches:
+                    self._send_packet({"type":"PUNCH","session":self.session_id},endpoint)
+            self.public.tick(now,self._send_raw)
             if now - self._last_ping >= 1:
                 self._last_ping = now
                 endpoints = list(self._members) if self.mode == "host" else ([self.host_target] if self.connection_state == "connected" else [])
@@ -635,8 +717,12 @@ class CoopNetworkNode:
                     self._send_packet({"type": "PROBE_REPLY", "id": ident,
                                        "build":self.version,"count": 1 + len(self._members), "max": MAX_PLAYERS}, addr)
                 return
+            # The answer to our HELLO: its nonce authenticates it, whatever path
+            # the host's box chose (another IPv6 source address, another port).
+            answer=(self.mode=='client' and kind in ('WELCOME','REJECT') and self.connection_state!='connected'
+                    and bool(self._join_nonce) and msg.get('nonce')==self._join_nonce)
             # Un refus d'une autre version doit rester lisible avant le filtre.
-            if (self.mode=='client' and addr==self.host_target and kind=='REJECT'
+            if (self.mode=='client' and (addr==self.host_target or answer) and kind=='REJECT'
                     and msg.get('nonce')==self._join_nonce and msg.get('reason')=='incompatible'):
                 if self.connection_state!='incompatible':
                     self.connection_detail=mismatch(msg.get('build'),self.version);self._log(self.connection_detail)
@@ -661,6 +747,8 @@ class CoopNetworkNode:
                     return
                 pid = player["player_id"]
                 if any(m["pid"] == pid and ep != addr for ep, m in self._members.items()):
+                    # The same companion through another path of its room code.
+                    if any(m["pid"] == pid and m["nonce"] == nonce for m in self._members.values()):return
                     self._send_packet({"type": "REJECT", "reason": "duplicate", "nonce": nonce}, addr)
                     return
                 fresh = addr not in self._members
@@ -685,7 +773,7 @@ class CoopNetworkNode:
                 self._publish_roster()
                 return
             if self.mode == "client":
-                if addr != self.host_target:
+                if addr != self.host_target and not answer:
                     return
                 if kind == "REJECT" and msg.get("nonce") == self._join_nonce:
                     self.connection_state = msg.get("reason") if msg.get("reason") in ("full", "incompatible", "duplicate") else "rejected"
@@ -711,6 +799,11 @@ class CoopNetworkNode:
                         self.enemy_channel.select(None)
                     self.session_id, self.connection_state = session, "connected"
                     self._last_host_seen = time.monotonic()
+                    if addr!=self.host_target:
+                        self.host_target=addr
+                        if len(self._candidates)>1:self._log(f"Salon joint par {rendezvous.format_endpoint(addr)}.")
+                    # The working path is tried first after a cut.
+                    self._candidates=[addr,*(c for c in self._candidates if c!=addr)][:rendezvous.MAX_CANDIDATES]
                     return
             if not self.session_id or msg.get("session") != self.session_id:
                 return
@@ -845,7 +938,10 @@ class CoopNetworkNode:
         while self._running and self._sock is sock:
             try:
                 data, addr = sock.recvfrom(MAX_DATAGRAM + 1)
-                if len(data) <= MAX_DATAGRAM:
+                addr = rendezvous.endpoint(*addr[:2])
+                if rendezvous.is_stun(data):
+                    with self._lock:self.public.receive(data)
+                elif len(data) <= MAX_DATAGRAM:
                     data=self._datagrams.receive(data,addr,time.monotonic())
                     if data is not None:self._handle_packet(json.loads(data.decode("utf-8")), addr)
             except (UnicodeError, ValueError, RecursionError, TypeError):

@@ -12,7 +12,7 @@ import urllib.error
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
-HELP='À distance, utilisez Tailscale ensemble ou ouvrez le port UDP 45990 sur la box de l’hôte.'
+HELP='À distance, envoyez le code de salon ; si votre ami reste bloqué, collez son code de réponse.'
 
 
 def local_addresses(port):
@@ -148,8 +148,8 @@ class HostingAccess:
         def prepare():
             rows=local_addresses(port);mapping=PortMapping(port);public=mapping.open()
             if public:rows.append(public)
-            hint=('UPnP activé. Demandez à votre ami de tester cette adresse.' if public else
-                  f'À distance, utilisez Tailscale ensemble ou ouvrez le port UDP {port} sur la box de l’hôte.')
+            hint=('UPnP activé : le code de salon inclut cette adresse.' if public else
+                  'Pas d’UPnP sur cette box : le code de salon passe par l’IPv6 ou le perçage de NAT.')
             with self.lock:
                 stale=self.generation!=generation
                 if not stale:self.mapping=mapping;self.info=dict(hosting_addresses=rows,network_hint=hint)

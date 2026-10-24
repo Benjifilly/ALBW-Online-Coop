@@ -95,8 +95,9 @@ class OnlineProgress:
             data_path=folder/(rid+'.bin');data_path.write_bytes(bundle)
             target=self.controller.net.host_target
             if not target:raise ValueError('Reconnectez-vous au salon avant de préparer l’import.')
+            from src.network.rendezvous import format_endpoint
             ticket=dict(context,profile=self.profile,bundle=str(data_path),
-                        join=f'{target[0]}:{target[1]}',args=self.launch_args)
+                        join=format_endpoint(target),args=self.launch_args)
             path=folder/(rid+'.json');path.write_text(json.dumps(ticket,ensure_ascii=False),encoding='utf-8')
             python=ROOT/'.venv/Scripts/pythonw.exe'
             subprocess.Popen([str(python if python.exists() else sys.executable),'-m','src.save_import',str(path)],cwd=ROOT,

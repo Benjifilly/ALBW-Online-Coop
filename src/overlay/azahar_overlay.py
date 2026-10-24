@@ -32,7 +32,7 @@ def load_preferences():
         return {
             "name": str(data.get("name", "Link"))[:24],
             "tunic": int(data.get("tunic", 0)) % 4,
-            "host": str(data.get("host", ""))[:15],
+            "host": str(data.get("host", ""))[:256],  # a room code or an address
             "port": max(1, min(65535, int(data.get("port", 45990)))),
             "hud": normalize_hud(data.get("hud")),
             "world_rendering": data.get("world_rendering", True) is True,

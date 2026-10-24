@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import argparse
+import ipaddress
 import json
 import os
 import sys
@@ -74,6 +75,8 @@ class CoopOrchestrator(QObject):
         from src.online_progress import OnlineProgress
         self.online_progress=OnlineProgress(self,profile,emulator_pid)
 
+        self._announced_room = self._announced_reply = ""
+        self._joining_since = self._hosting_since = time.monotonic()
         self._running = True
         self._latest_ui_snapshot: Dict = {
             "rpc_connected": False,
@@ -106,6 +109,11 @@ class CoopOrchestrator(QObject):
             # Hors des instantanés du jeu : sur l'écran titre, rien d'autre ne change.
             try:progress=self.online_progress.poll()
             except Exception:progress={}
+            try:
+                if self.net.mode != "client" or self.net.connection_state == "connected":
+                    self._joining_since = time.monotonic()
+                self._announce_codes()
+            except Exception:pass
             try:
                 tunic_str = TUNIC_NAMES.get(self.tunic_idx, "green")
                 with self._memory_lock:
@@ -264,6 +272,10 @@ class CoopOrchestrator(QObject):
                       port=self.net.bind_port, host_target=self.net.host_target)
         result.update(self.net.get_connection_info())
         result.update(self.hosting_access.snapshot())
+        # Accessory: a code that cannot be built never costs the menu its state.
+        try:room, reply, note = self.room_codes()
+        except Exception:room = reply = note = ""
+        result.update(room_code=room, reply_code=reply, nat_note=note)
         return result
 
     def set_identity(self, name: str, tunic_idx: int) -> None:
@@ -274,12 +286,59 @@ class CoopOrchestrator(QObject):
 
     def start_hosting(self, port: int = 45990) -> bool:
         ok=self.net.start_host(port)
-        if ok:self.hosting_access.start(self.net.bind_port)
+        if ok:self.hosting_access.start(self.net.bind_port);self._hosting_since=time.monotonic()
         return ok
 
     def join_host(self, host_ip: str, port: int = 45990) -> bool:
         self.hosting_access.close()
         return self.net.join_host(host_ip, port)
+
+    def join_target(self, text: str, port: int = 45990) -> bool:
+        """An address or a room code: every path of the code is tried at once."""
+        from src.network.rendezvous import parse_target, PREFIX
+        candidates = parse_target(text, port)
+        if not candidates:
+            return False
+        self.hosting_access.close()
+        code = text.strip().upper().startswith(PREFIX)
+        return self.net.join_candidates(candidates, label="l’hôte (code de salon)" if code else None)
+
+    def open_for_friend(self, code: str):
+        """Host: the friend's reply code opens this box toward it for a while."""
+        from src.network.rendezvous import decode, REPLY
+        try:candidates = decode(code, REPLY)
+        except ValueError as exc:return str(exc)
+        if not self.net.punch(candidates):return "Ouvrez d’abord un salon."
+        self.add_log("Passage ouvert vers votre ami pendant 45 s : il peut se connecter maintenant.")
+        return ""
+
+    def room_codes(self):
+        """(room code of the host, reply code of a waiting friend, note) for the menu."""
+        from src.network import rendezvous
+        if self.net.mode == "host":
+            rows = self.hosting_access.snapshot().get("hosting_addresses", [])
+            found = self.net.public_candidates()
+            for row in sorted(rows, key=lambda r: "UPnP" not in r["label"]):
+                found += rendezvous.parse_target(row["address"], self.net.bind_port) or []
+            # A public path first; the local network last, for friends at home.
+            found.sort(key=lambda value: (not rendezvous.shareable(value[0]) or ipaddress.ip_address(value[0]).is_private,
+                                          ":" not in value[0]))
+            return rendezvous.encode(rendezvous.HOST, found), "", self.net.nat_note()
+        if self.net.mode == "client" and self.net.connection_state != "connected":
+            return "", self.net.reply_code(), self.net.nat_note()
+        return "", "", ""
+
+    def _announce_codes(self):
+        room, reply, note = self.room_codes()
+        # Once the local, UPnP and STUN paths are known: one line, not three.
+        settled = (self.hosting_access.snapshot().get("hosting_addresses")
+                   and (self.net.public_candidates() or time.monotonic() - self._hosting_since > 4))
+        if room and room != self._announced_room and settled:
+            self._announced_room = room
+            self.add_log("Code de salon à envoyer à vos amis : " + room, note)
+        if reply and reply != self._announced_reply and time.monotonic() - self._joining_since > 3:
+            self._announced_reply = reply
+            self.add_log("Si l’hôte ne vous voit pas, envoyez-lui ce code de réponse : " + reply, note)
 
     def leave_session(self) -> None:
         self.hosting_access.close()
@@ -341,7 +400,7 @@ def main() -> None:
     parser.add_argument('--host-progress',action='store_true',help='Proposer l’import de la progression enregistrée de l’hôte')
     network = parser.add_mutually_exclusive_group()
     network.add_argument("--host-port", type=int)
-    network.add_argument("--join", help="Adresse IPv4:port de l’hôte")
+    network.add_argument("--join", help="Adresse (IPv4:port, [IPv6]:port) ou code de salon de l’hôte")
     args = parser.parse_args()
     if args.demo_party and not args.preview:
         parser.error("--demo-party nécessite --preview")
@@ -419,11 +478,8 @@ def main() -> None:
         if args.host_port:
             orchestrator.start_hosting(args.host_port)
         elif args.join:
-            try:
-                address, port = args.join.rsplit(":", 1)
-                orchestrator.join_host(address, int(port))
-            except (ValueError, TypeError):
-                orchestrator.add_log("Adresse du salon local invalide.")
+            if not orchestrator.join_target(args.join):
+                orchestrator.add_log("Adresse ou code de salon invalide.")
     sys.exit(app.exec())
 
 

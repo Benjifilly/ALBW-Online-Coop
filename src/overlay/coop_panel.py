@@ -282,11 +282,11 @@ class CoopPanel(QFrame):
         address_layout = QVBoxLayout(self.address_box)
         address_layout.setContentsMargins(0, 0, 0, 0)
         address_layout.setSpacing(6)
-        address_label = label("Adresse de l’hôte (port facultatif)", "section")
+        address_label = label("Code de salon ou adresse de l’hôte", "section")
         self.ip_edit = QLineEdit(self.overlay.preferences.get("host", ""))
-        self.ip_edit.setPlaceholderText("Ex. 100.80.12.34:45990")
-        self.ip_edit.setMaxLength(64)
-        self.ip_edit.setAccessibleName("Adresse IPv4 de l’hôte")
+        self.ip_edit.setPlaceholderText("Collez le code ALBW-… de l’hôte")
+        self.ip_edit.setMaxLength(256)
+        self.ip_edit.setAccessibleName("Code de salon ou adresse de l’hôte")
         address_label.setBuddy(self.ip_edit)
         self.ip_edit.returnPressed.connect(self.submit_session)
         address_layout.addWidget(address_label)
@@ -324,6 +324,13 @@ class CoopPanel(QFrame):
         self.copy_address=button('Copier l’adresse',self.copy_host_address)
         layout.addWidget(self.copy_address)
         self.network_hint=label('','muted');layout.addWidget(self.network_hint)
+        # Host: a friend whose packets this box filters sends back a reply code.
+        self.reply_box=QWidget();reply_row=QHBoxLayout(self.reply_box);reply_row.setContentsMargins(0,0,0,0)
+        self.reply_edit=QLineEdit();self.reply_edit.setPlaceholderText('Code de réponse d’un ami (ALBW-…)')
+        self.reply_edit.setMaxLength(256);self.reply_edit.setAccessibleName('Code de réponse d’un ami')
+        self.reply_edit.returnPressed.connect(self.open_for_friend)
+        reply_row.addWidget(self.reply_edit,1);reply_row.addWidget(button('Ouvrir le passage',self.open_for_friend))
+        self.reply_box.hide();layout.addWidget(self.reply_box)
         self.btn_progress=button('Reprendre la progression de l’hôte…',self.request_progress)
         self.btn_progress.hide();layout.addWidget(self.btn_progress)
         self.progress_status=label('','muted');layout.addWidget(self.progress_status)
@@ -446,16 +453,18 @@ class CoopPanel(QFrame):
         self.btn_connect.setEnabled(False)
         port = self.port_edit.value()
         if self.mode_group.checkedId() == 1:
-            from src.network.probe import parse_address,probe
-            target=parse_address(self.ip_edit.text(),45990)
-            if target is None:
-                self.show_message("Saisissez l’adresse de votre ami, par exemple 100.80.12.34:45990.", error=True)
+            from src.network.probe import probe_any
+            from src.network.rendezvous import parse_target
+            text=self.ip_edit.text().strip()
+            targets=parse_target(text,45990)
+            if not targets:
+                self.show_message("Collez le code de salon de votre ami (ALBW-…), ou son adresse.", error=True)
                 self.btn_connect.setEnabled(True)
                 self.ip_edit.setFocus()
                 return
             ticket=object();self._probe_ticket=ticket
             self.show_message('Vérification du salon…')
-            def check():self.probe_finished.emit((ticket,target),probe(*target))
+            def check():self.probe_finished.emit((ticket,text),probe_any(targets))
             threading.Thread(target=check,daemon=True).start()
             return
         else:
@@ -465,22 +474,38 @@ class CoopPanel(QFrame):
         self.show_message(message if ok else "Impossible d’ouvrir le salon. Consultez le journal pour les détails.", error=not ok)
         self.overlay.refresh_state()
 
-    def _joined_probe(self,request,answer):
-        ticket,target=request
+    def _joined_probe(self,request,found):
+        ticket,text=request
         if ticket is not self._probe_ticket:return
         self._probe_ticket=None;self.btn_connect.setEnabled(True)
         from src.network.probe import NO_HOST
-        if answer is None:return self.show_message(NO_HOST,error=True)
-        if not answer['compatible']:return self.show_message(answer['detail'],error=True)
-        if answer.get('count',0)==answer['max']:return self.show_message('Le salon est complet.',error=True)
-        ok=self.overlay.orchestrator.join_host(*target)
+        from src.network.rendezvous import PREFIX
+        code=text.upper().startswith(PREFIX)
+        answer=found[0] if found else None
+        # A box that filters only answers once punched: a code still connects.
+        if answer is None and not code:return self.show_message(NO_HOST,error=True)
+        if answer and not answer['compatible']:return self.show_message(answer['detail'],error=True)
+        if answer and answer.get('count',0)==answer['max']:return self.show_message('Le salon est complet.',error=True)
+        ok=self.overlay.orchestrator.join_target(text)
         if ok and self.join_progress.isChecked():self.overlay.orchestrator.online_progress.auto=True
-        self.port_edit.setValue(target[1]);self.ip_edit.setText(target[0]);self.overlay.save_preferences()
-        self.show_message('Connexion au salon…' if ok else NO_HOST,error=not ok);self.overlay.refresh_state()
+        self.overlay.save_preferences()
+        self.show_message(('Connexion au salon…' if answer else
+                           'Connexion en cours. Si rien ne se passe, copiez votre code de réponse ci-dessous pour l’hôte.')
+                          if ok else NO_HOST,error=not ok)
+        self.overlay.refresh_state()
+
+    def open_for_friend(self):
+        if not self.overlay.orchestrator:return
+        error=self.overlay.orchestrator.open_for_friend(self.reply_edit.text())
+        if error:return self.show_message(error,error=True)
+        self.reply_edit.clear();self.show_message('Passage ouvert : votre ami se connecte dans quelques secondes.')
 
     def copy_host_address(self):
         address=self.host_addresses.currentData()
-        if address:QApplication.clipboard().setText(address);self.show_message('Adresse copiée. Envoyez-la à votre ami.')
+        if address:
+            QApplication.clipboard().setText(address)
+            self.show_message('Code copié. Envoyez-le à l’hôte.' if self._state.get('net_mode')=='client' else
+                              'Copié. Envoyez-le à votre ami.')
 
     def request_progress(self):
         if self.overlay.orchestrator and self.overlay.orchestrator.online_progress.request():
@@ -515,11 +540,21 @@ class CoopPanel(QFrame):
         self.life_note.setVisible(bool(notice))
         mode = state.get("net_mode", "offline")
         rows=state.get('hosting_addresses',[]) if mode=='host' else []
+        # The room code first: it carries every path, IPv6 and punching included.
+        if mode=='host' and state.get('room_code'):rows=[dict(label='Code de salon',address=state['room_code']),*rows]
+        if mode=='client' and state.get('reply_code'):rows=[dict(label='Votre code de réponse pour l’hôte',address=state['reply_code'])]
         if rows!=getattr(self,'_address_rows',None):
             self._address_rows=rows;self.host_addresses.clear()
-            for row in rows:self.host_addresses.addItem(f"{row['label']} · {row['address']}",row['address'])
+            for row in rows:
+                text=row['address'] if len(row['address'])<=28 else row['address'][:26]+'…'
+                self.host_addresses.addItem(f"{row['label']} · {text}",row['address'])
         self.host_addresses.setVisible(bool(rows));self.copy_address.setVisible(bool(rows))
-        self.network_hint.setText(state.get('network_hint','') if mode=='host' else state.get('connection_detail',''))
+        self.copy_address.setText('Copier le code' if rows and rows[0]['address'].startswith('ALBW-') else 'Copier l’adresse')
+        self.reply_box.setVisible(mode=='host' and not self.overlay.preview_only)
+        hint=state.get('network_hint','') if mode=='host' else state.get('connection_detail','')
+        if mode=='host' and state.get('room_code'):
+            hint='Envoyez le code de salon à vos amis. Si l’un d’eux reste bloqué, collez ici son code de réponse.'
+        self.network_hint.setText('\n'.join(filter(None,(hint,state.get('nat_note','')))))
         transfer=state.get('progress_transfer',{});receiving=transfer.get('state')=='receiving'
         self.btn_progress.setVisible(mode=='client')
         self.btn_progress.setEnabled(state.get('connection_state')=='connected' and not receiving and not self.overlay.preview_only)
@@ -549,7 +584,9 @@ class CoopPanel(QFrame):
                 "incompatible": "Versions incompatibles", "duplicate": "Profil déjà connecté"}.get(
                     connection, "Échanges réseau actifs" if peers else "En attente de l’hôte…"))
             target = state.get("host_target")
-            self.session_detail.setText(f"{target[0]}:{target[1]}" if target else self.ip_edit.text())
+            from src.network.rendezvous import format_endpoint
+            self.session_detail.setText(format_endpoint(target) if target else
+                                        'Code de salon' if self.ip_edit.text().strip().upper().startswith('ALBW-') else self.ip_edit.text())
         else:
             self.session_status.setText("Aucun salon ouvert")
             self.session_detail.setText("")

@@ -171,8 +171,13 @@ def room_port():
 
 
 def saved_friend():
-    host = str(preferences().get("host", ""))[:15]
-    return f"{host}:{room_port()}" if host else ""
+    """The last room code, or the last address with its port."""
+    from src.network.rendezvous import PREFIX, format_endpoint, parse_target
+    host = str(preferences().get("host", ""))[:256]
+    if host.upper().startswith(PREFIX):
+        return host
+    found = parse_target(host, room_port()) if host else None
+    return format_endpoint(found[0]) if found else ""
 
 
 def save_friend(host, port):
@@ -417,32 +422,44 @@ def wait_for_game():
 
 def join_friend(screen):
     """Real reachability test (PROBE), then play straight into the friend's room."""
-    from src.network.probe import parse_address, probe
-    print(f"\n  {MUTED}Adresse de votre ami, par exemple 192.168.1.24 ou 192.168.1.24:45990.{RESET}")
-    text = ask(f"Ami{f' [{screen.status.friend}]' if screen.status.friend else ''} : ") or screen.status.friend
-    target = parse_address(text, room_port())
-    if target is None:
-        screen.say("Adresse invalide.", "bad")
+    from src.network.probe import probe_any
+    from src.network.rendezvous import PREFIX, format_endpoint, parse_target
+    print(f"\n  {MUTED}Collez le code de salon de votre ami (ALBW-…), ou son adresse (192.168.1.24:45990).{RESET}")
+    shown = screen.status.friend if len(screen.status.friend) <= 32 else screen.status.friend[:31] + "…"
+    text = ask(f"Ami{f' [{shown}]' if shown else ''} : ") or screen.status.friend
+    targets = parse_target(text, room_port())
+    if not targets:
+        screen.say("Code ou adresse invalide : recopiez-le en entier.", "bad")
         return False
-    sys.stdout.write(f"  {GOLD}◐{RESET} {PALE}Test de connexion vers {target[0]}:{target[1]}…{RESET}\n")
+    code = text.strip().upper().startswith(PREFIX)
+    sys.stdout.write(f"  {GOLD}◐{RESET} {PALE}Test de connexion vers "
+                     f"{'le salon de votre ami' if code else format_endpoint(targets[0])}…{RESET}\n")
     sys.stdout.flush()
-    answer = probe(*target)
-    save_friend(*target)
-    screen.status.friend = f"{target[0]}:{target[1]}"
-    if answer is None:
+    found = probe_any(targets)
+    save_friend(text.strip(), targets[0][1])
+    screen.status.friend = text.strip()
+    answer = found[0] if found else None
+    if answer is None and code:
+        # Its box may filter until punched: the companion still tries every path
+        # and shows the reply code the host pastes in its Salon menu.
+        print(f"  {GOLD}◐ Pas encore de réponse directe : le compagnon va tenter le passage.{RESET}\n"
+              f"  {MUTED}Si rien ne se passe, envoyez à l’hôte le code de réponse affiché dans le journal.{RESET}")
+    elif answer is None:
         from src.network.probe import NO_HOST
         screen.say(NO_HOST, "bad")
         return False
-    if not answer["compatible"]:
+    if answer and not answer["compatible"]:
         screen.say(answer.get('detail',"Salon trouvé, mais vos versions du mod diffèrent. Mettez le mod à jour."), "bad")
         return False
-    if answer["count"] is not None and answer["count"] >= answer["max"]:
+    if answer and answer["count"] is not None and answer["count"] >= answer["max"]:
         screen.say(f"Salon complet ({answer['count']}/{answer['max']}).", "bad")
         return False
-    players = f" · {answer['count']}/{answer['max']} joueurs" if answer["count"] else ""
-    print(f"  {GREEN}✔ Salon joignable · {answer['ms']} ms{players}{RESET}")
+    if answer:
+        players = f" · {answer['count']}/{answer['max']} joueurs" if answer["count"] else ""
+        print(f"  {GREEN}✔ Salon joignable · {answer['ms']} ms{players}{RESET}")
     shared=ask('Rejoindre avec la progression enregistrée de l’hôte ? Une copie de secours sera créée. [o/N] ')
-    arguments=["--join", f"{target[0]}:{target[1]}"]
+    # A code keeps every path for the companion; an address is passed as written.
+    arguments=["--join", text.strip() if code else format_endpoint(targets[0])]
     if shared.lower() in ('o','oui'):arguments.append('--host-progress')
     return play(screen, arguments)
 
