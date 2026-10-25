@@ -16,6 +16,7 @@ from src.console import where
 
 RETRIES=3          # automatic renderer restarts per session after an interruption
 RETRY_DELAY=5      # seconds, long enough for a loading or a shader compilation
+LOCAL_PAINTING_RETRY=10  # seconds between attempts at this Link's own painting colour
 
 
 class InGameAppearance:
@@ -45,7 +46,7 @@ class InGameAppearance:
         self._last_wall=None
         self._poses=PoseBuffer()
         self._local_painting=None
-        self._local_painting_attempted=False
+        self._local_painting_retry=0;self._local_painting_error=''
         self.effects=None
         self.world_extension=None
         self.grass_restore=None
@@ -187,6 +188,11 @@ class InGameAppearance:
             self.visible=self.colour_applied=False
             self.state='unsupported' if self.bridge.attached_title_id else 'waiting_game'
             return
+        # Before anything writes to our old private addresses: in a restarted
+        # game they belong to the new process.
+        if self.trial and self.trial.vanished():
+            self._forget_native()
+            return
         if self._failure:
             # A stalled game (loading, shader compilation) must not leave the
             # whole session without companion: the same as switching the
@@ -265,17 +271,26 @@ class InGameAppearance:
                 if not self.trial.set_local_colour(snapshot.tunic_color):
                     raise RuntimeError('La couleur du héros ne répond plus.')
                 self.colour_applied=True
-                if self.palette.buffer and not self._local_painting_attempted:
-                    self._local_painting_attempted=True
+                # Retried every LOCAL_PAINTING_RETRY seconds: one failure kept
+                # this Link's painting green for the whole session (25/10).
+                if self.palette.buffer and not self._local_painting and now>=self._local_painting_retry:
+                    self._local_painting_retry=now+LOCAL_PAINTING_RETRY
                     from src.memory.local_painting import LocalPaintingPalette
-                    try:self._local_painting=LocalPaintingPalette(self.bridge,self.palette.buffer,memory.player_ptr)
-                    except ValueError as exc:self.log('Couleur de fresque locale indisponible : '+str(exc))
+                    try:
+                        # A rebuilt palette rewrites its tables: the frame hook
+                        # must not bind half-written ones meanwhile.
+                        if not self.bridge.write_u32(MAILBOX+0x164,0):
+                            raise RuntimeError('Couleur de fresque locale non suspendue.')
+                        self._local_painting=LocalPaintingPalette(self.bridge,self.palette.buffer,memory.player_ptr)
+                    except ValueError as exc:self._local_painting_failed(exc)
                 if self._local_painting:
-                    try:self._local_painting.publish(snapshot.tunic_color)
+                    try:
+                        self._local_painting.publish(snapshot.tunic_color)
+                        self._local_painting_error=''
                     except ValueError as exc:
                         # An unsupported local pigment must not take down the
                         # independent companion, equipment and network renderer.
-                        self.log('Couleur de fresque locale indisponible : '+str(exc))
+                        self._local_painting_failed(exc)
                         self._local_painting=None
             if peer and ready:
                 peer=self._poses.sample(peer,now)
@@ -475,7 +490,36 @@ class InGameAppearance:
     def close(self):
         with self.present_lock:return self._close()
 
+    def _local_painting_failed(self,exc):
+        message='Couleur de fresque locale indisponible : '+str(exc)
+        if message!=self._local_painting_error:self.log(message)
+        self._local_painting_error=message
+
+    def _forget_native(self):
+        """The game restarted inside Azahar: its new process has none of our
+        hooks, reserves or services, and their old addresses are now its own.
+        Drop them without a single write, then install again from scratch."""
+        self.trial.abandon()
+        self.world_extension=self.loot_service=self.progress_service=self.grass_restore=None
+        self.effects=self.painting=self.equipment=None
+        self.trial=self.palette=self.owner=self._native_status=None
+        self._last_wall=None;self._poses.clear()
+        self._local_painting=None;self._local_painting_retry=0
+        self._presented_peer_id=None;self.visible=self.colour_applied=False
+        self._failure='';self._retries=0;self._allocation_blocked=False
+        # The old process's model and palette must never be "reused" at the same address.
+        self.cache=dict(self.cache,model=0,palette=0,attempted=False)
+        try:
+            self._save_cache();self.marker_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.state='waiting_game'
+        self.log('Le jeu a redémarré dans Azahar : couleurs et compagnon réinstallés.')
+
     def _close(self):
+        if self.trial and self.trial.vanished():
+            self._forget_native()
+            return True
         if self.world_extension:
             try:cleaned=self.world_extension.close()
             except (RuntimeError,ValueError,OSError):cleaned=False
@@ -543,7 +587,7 @@ class InGameAppearance:
         self._last_wall=None
         self._poses.clear()
         self._local_painting=None
-        self._local_painting_attempted=False
+        self._local_painting_retry=0
         self._presented_peer_id=None
         return True
 

@@ -430,7 +430,9 @@ class SharedLootSynchronizer:
             if task and native.submit(task['op'],task.get('record',0),room=task.get('room',room),spawn=task.get('spawn')):
                 self.pending=task
         except (RuntimeError,ValueError,OSError,TypeError,KeyError,struct.error) as exc:
-            self.error=str(exc) or type(exc).__name__;self._failed_at=time.monotonic()
+            error=str(exc) or type(exc).__name__;self._failed_at=time.monotonic()
             self._clear_dynamic()
             native.renew(False)
-            self.log('Partage des récompenses interrompu : '+self.error)
+            # Once per failure: a closed Azahar fails every step (25/10: hundreds of lines).
+            if error!=self.error:self.log('Partage des récompenses interrompu : '+error)
+            self.error=error

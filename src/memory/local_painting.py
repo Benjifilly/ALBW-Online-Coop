@@ -50,7 +50,9 @@ class LocalPaintingPalette(PrivatePaintingPalette):
             pointer=self.table_for(model,colour)
             count=self.bridge.read_u32(pointer)
             entries.extend(struct.unpack('<'+'I'*(count*2),self._read(pointer+4,count*8)))
-        if not 1<=len(entries)//2<=96:raise ValueError('Nombre de liaisons locales non reconnu.')
+        if not 1<=len(entries)//2<=96:
+            # 25/10: seen after the game restarted under a stale palette buffer.
+            raise ValueError(f'Nombre de liaisons locales non reconnu ({len(entries)//2}).')
         data=struct.pack('<I',len(entries)//2)+struct.pack('<'+'I'*len(entries),*entries)
         address=self._alloc(len(data));self._write(address,data);self.combined[colour]=address
         return address

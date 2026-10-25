@@ -128,6 +128,12 @@ class WorldSynchronizer:
         network_context=net.get_world_context() if online else None
         room=(snapshot.course,snapshot.stage)
         if self.native and self.native.closed:self._forget_scene()
+        if self.native and getattr(self.native.trial,'lost',False):
+            # Its game restarted inside Azahar (appearance._forget_native): the
+            # new process has none of it. Marked closed for enemies and life,
+            # never closed through the new process's memory.
+            self.native.closed=True;self._forget_scene()
+            self._renderer_gate=None;self._seed_cuts=[];self.state='changing_room'
         self.loot.step(memory,snapshot,net,appearance)
         self.progress.step(memory,snapshot,net,appearance,peers)
         if self.error and not self._recover(appearance):return

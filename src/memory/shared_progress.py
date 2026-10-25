@@ -378,6 +378,8 @@ class SharedProgressSynchronizer:
                 self.log(f'Progression d’un autre joueur appliquée ({self.flags_applied} drapeau(x)).')
                 self.flags_applied=0;self._flags_logged=now
         except (RuntimeError,ValueError,OSError,TypeError,KeyError,struct.error) as exc:
-            self.error=str(exc) or type(exc).__name__;self._failed_at=time.monotonic()
+            error=str(exc) or type(exc).__name__;self._failed_at=time.monotonic()
             self.native.renew(False)
-            self.log('Partage de la progression interrompu : '+self.error)
+            # Once per failure: a closed Azahar fails every step (25/10: hundreds of lines).
+            if error!=self.error:self.log('Partage de la progression interrompu : '+error)
+            self.error=error

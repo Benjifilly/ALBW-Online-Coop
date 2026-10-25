@@ -85,6 +85,7 @@ class RemoteModelTrial:
         self.colour_jump=branch(COLOR_HOOK,COLOR_ENTRY)
         self.fresco_heap_jump=branch(FRESCO_HEAP_HOOK,FRESCO_HEAP_ENTRY)
         self.installed = False
+        self.lost = False
         self.pid = None
         self.owner = 0
         self.room = None
@@ -241,12 +242,29 @@ class RemoteModelTrial:
         data = self.bridge.read_memory(MAILBOX, 0x6C)
         if not data or len(data)!=0x6C:
             return None
-        return dict(model=struct.unpack_from('<I',data,0x10)[0],
+        return dict(alive=struct.unpack_from('<I',data)[0]==MAGIC,
+                    model=struct.unpack_from('<I',data,0x10)[0],
                     state=struct.unpack_from('<I',data,0x14)[0],
                     updates=struct.unpack_from('<I',data,0x50)[0],
                     busy=struct.unpack_from('<I',data,0x54)[0],
                     palette=struct.unpack_from('<I',data,0x64)[0],
                     allocation_result=struct.unpack_from('<I',data,0x68)[0])
+
+    def vanished(self):
+        """The game restarted under us (Azahar stopped and started it, or its
+        graphics API changed, 25/10): a new process, or our entry and mailbox
+        both back to the game's own bytes. Nothing of ours is left to restore."""
+        if not self.installed:return False
+        pid=self.bridge.attached_pid
+        if pid is None:return False
+        if pid!=self.pid:return True
+        header=self.bridge.read_memory(MAILBOX,4)
+        return (header is not None and header!=struct.pack('<I',MAGIC)
+                and self.bridge.read_memory(RETURN_HOOK,4)==ORIGINAL_RETURN)
+
+    def abandon(self):
+        """Forget a hook its game no longer has; never write to the new process."""
+        self.installed=False;self._published=False;self._enabled=False;self.lost=True
 
     def restore(self, free_palette=True):
         if not self.installed:
