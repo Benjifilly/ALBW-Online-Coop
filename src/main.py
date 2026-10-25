@@ -49,17 +49,24 @@ class CoopOrchestrator(QObject):
         self._last_error = ""
         self.status_path = None
         self._next_status_write = 0
-        self._next_network_send = 0
-        # This loop alone sends our Link's position: its pauses are the friend's stutters.
+        # pose_loop sends our Link; its pauses would be the friend's stutters.
         self._loop_times: List[float] = []
+        self._pose_times: List[float] = []
         self._send_times: List[float] = []
         self._next_loop_report = time.monotonic() + 60
+        # Set by the sync loop, sent with every pose: life fields (None until
+        # its first step) and whether this Link is merged into a wall.
+        self._life_fields = None
+        self._local_merged = False
+        self._pose_error = ""
         # The open menu keeps the pad: set by the overlay, held by the sync loop.
         self._menu_holds_input = False
         self._input_held = False
 
         self.bridge = bridge or AzaharBridge()
         self.memory = ALBWMemoryController(self.bridge)
+        # pose_loop's own reader: it never waits for the memory lock.
+        self.pose_memory = ALBWMemoryController(self.bridge)
         self.shared_health = SharedHealthSynchronizer()
         self.shared_world=WorldSynchronizer(self.bridge,self.add_log)
         # A collective return debits every wallet itself: its debit is not a spend.
@@ -127,7 +134,8 @@ class CoopOrchestrator(QObject):
             try:
                 tunic_str = TUNIC_NAMES.get(self.tunic_idx, "green")
                 with self._memory_lock:
-                    snap = self.memory.read_snapshot(self.player_id, self.player_name, tunic_str)
+                    # The visual state is read and sent by pose_loop only.
+                    snap = self.memory.read_snapshot(self.player_id, self.player_name, tunic_str, visual=False)
                     if not self.life.party.active and not (self.life.wiped and self.life.party.group):
                         self.shared_health.step(snap, self.net, self.memory)
                 detection = "playing" if snap.in_game else self.bridge.detection_status
@@ -147,20 +155,15 @@ class CoopOrchestrator(QObject):
                        and self.shared_world.state not in ('retiring','changing_room','waiting_game','waiting_session') else None)
                 with self._memory_lock:
                     # Death, spectating and weathervane revival (life_sync).
-                    for key,value in self.life.step(snap,all_peers,world,self.memory.player_ptr,roster_ready=life_ready).items():
+                    fields=self.life.step(snap,all_peers,world,self.memory.player_ptr,roster_ready=life_ready)
+                    for key,value in fields.items():
                         setattr(snap,key,value)
+                    self._life_fields=dict(fields)
                     # Azahar reads the pad behind the menu: the game ignores it meanwhile
                     # (input_lock.arm, under a frame lease renewed here).
                     held=self._menu_holds_input
                     if held or self._input_held:
                         self._input_held=self.life.hold_input(world,held) and held
-                if frame_started>=self._next_network_send:
-                    self._next_network_send=frame_started+1/30
-                    # Pot/bush/rock carried by this Link (shown by the others).
-                    carried=self.shared_world.carried
-                    if carried and snap.render_state:snap.render_state['carried']=carried
-                    self.net.broadcast_state(snap)
-                    if snap.in_game:self._send_times.append(time.monotonic())
                 # A spectator is invisible: never drawn, nothing reacts to him.
                 peers = [p for p in all_peers if p.get('life','alive')!='ghost']
                 with self._memory_lock:
@@ -184,7 +187,7 @@ class CoopOrchestrator(QObject):
                         "world": world_str,
                         "is_self": True,
                         "is_room_master": authority == self.player_id,
-                        "is_wall_merged": bool(snap.render_state.get('merged',False)),
+                        "is_wall_merged": self._local_merged and snap.in_game,
                         "life": snap.life,
                     }
                 ]
@@ -256,16 +259,19 @@ class CoopOrchestrator(QObject):
         if now < self._next_loop_report:
             return
         self._next_loop_report = now + 60
-        loops, sends = sorted(self._loop_times), self._send_times
-        self._loop_times, self._send_times = [], sends[-1:]
+        loops, poses, sends = sorted(self._loop_times), sorted(self._pose_times), self._send_times
+        self._loop_times, self._pose_times, self._send_times = [], [], sends[-1:]
         # Over 1.5 s: a loading screen or a menu, not a stutter.
         pauses = [b - a for a, b in zip(sends, sends[1:]) if .15 < b - a < 1.5]
         if len(pauses) >= 5 and self.net.get_active_peers():
-            pick = lambda share: loops[min(len(loops) - 1, int(len(loops) * share))] * 1000
+            def spread(values):
+                pick = lambda share: values[min(len(values) - 1, int(len(values) * share))] * 1000
+                return (f"médiane {pick(.5):.0f} ms, p95 {pick(.95):.0f} ms, max {values[-1] * 1000:.0f} ms"
+                        if values else "aucune mesure")
+            # A slow pose read means a slow game link (RPC); a slow loop, heavy steps.
             self.add_log(f"Votre position part par à-coups : {len(pauses)} pauses de plus de 150 ms en 1 min "
                          f"(la plus longue {max(pauses) * 1000:.0f} ms).",
-                         f"Boucle du compagnon : médiane {pick(.5):.0f} ms, p95 {pick(.95):.0f} ms, "
-                         f"max {loops[-1] * 1000:.0f} ms.")
+                         f"Lecture de la pose : {spread(poses)}.\nBoucle du compagnon : {spread(loops)}.")
 
     def present_loop(self) -> None:
         """Companion pose for each new game frame, beside the slower sync loop.
@@ -278,6 +284,48 @@ class CoopOrchestrator(QObject):
         while self._running:
             self._present()
             time.sleep(.002)
+
+    def pose_loop(self) -> None:
+        """Reads and sends this Link 30 times a second, beside the sync loop.
+
+        The sync loop's world, enemy and rendering steps can pause it for
+        hundreds of ms on a slower PC: on 25/10 a laptop's Link reached its
+        friend in jerks (200-500 ms holes about every 0.6 s). This thread
+        owns the visual read (render_state) and the sending, with its own
+        reader and without the memory lock, so no step delays it.
+        """
+        while self._running:
+            started = time.monotonic()
+            self._send_pose(started)
+            time.sleep(max(.001, 1 / 30 - (time.monotonic() - started)))
+
+    def _send_pose(self, started):
+        # Before the sync loop's first life step, a spectator would be sent alive.
+        fields = self._life_fields
+        if fields is None:
+            return
+        try:
+            snap = self.pose_memory.read_snapshot(self.player_id, self.player_name,
+                                                  TUNIC_NAMES.get(self.tunic_idx, "green"))
+            for key, value in fields.items():
+                setattr(snap, key, value)
+            self._local_merged = bool(snap.render_state.get('merged', False))
+            # Pot/bush/rock carried by this Link (shown by the others).
+            carried = self.shared_world.carried
+            if carried and snap.render_state:
+                snap.render_state['carried'] = carried
+            self.net.broadcast_state(snap)
+            if snap.in_game:
+                now = time.monotonic()
+                self._send_times.append(now)
+                self._pose_times.append(now - started)
+            self._pose_error = ""
+        except Exception as exc:
+            message = f"Envoi de votre position interrompu : {type(exc).__name__}: {exc}"
+            # Closing the bridge at shutdown is not a failure worth a line.
+            if message != self._pose_error and getattr(self, "_running", True):
+                self._pose_error = message
+                self.add_log(message, where(exc))
 
     def _present(self):
         """Companion pose for the newest game frame."""
@@ -416,7 +464,7 @@ class CoopOrchestrator(QObject):
         with self._memory_lock:
             # Refresh before writing: a door transition may have happened since
             # the menu last displayed this action.
-            snap = self.memory.read_snapshot(self.player_id, self.player_name, TUNIC_NAMES[self.tunic_idx])
+            snap = self.memory.read_snapshot(self.player_id, self.player_name, TUNIC_NAMES[self.tunic_idx], visual=False)
             target = next((p for p in self.net.get_active_peers() if p.get("in_game") and p.get("course") == snap.course
                            and p.get("stage") == snap.stage), None)
             if target is None or not snap.in_game:
@@ -528,6 +576,7 @@ def main() -> None:
         sync_thread = threading.Thread(target=orchestrator.sync_loop, daemon=True)
         sync_thread.start()
         threading.Thread(target=orchestrator.present_loop, daemon=True).start()
+        threading.Thread(target=orchestrator.pose_loop, daemon=True).start()
         if args.host_port:
             orchestrator.start_hosting(args.host_port)
         elif args.join:

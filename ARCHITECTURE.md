@@ -111,6 +111,21 @@ Jeu A coupe → hook de capture → anneau natif (`world+0x100`) →
 identités réseau sont `type, placement, xyz du lot, index, xyz` : jamais de
 pointeur.
 
+## Fils du compagnon
+
+- **Boucle de synchro** (`sync_loop`, environ 60/s) : instantané sans
+  apparence, cœurs, vie et spectateur, rendu du compagnon reçu, monde partagé,
+  ennemis. Ses étapes lourdes tiennent le verrou mémoire.
+- **Envoi de la pose** (`pose_loop`, 30/s) : son propre lecteur, sans le
+  verrou, lit l'instantané complet avec l'apparence (`render_state`) et
+  l'envoie avec les champs de vie de la dernière étape. Aucune étape lourde ne
+  retarde la position envoyée (25/10 : trous de 200 à 500 ms chez l'ami).
+- **Présentation** (`present_loop`) : repose le compagnon reçu à chaque
+  nouvelle image du jeu, entre deux étapes de rendu.
+
+Chez le receveur, `PoseBuffer` règle son retard sur les trous observés (50 à
+400 ms). Une fois par minute, le journal signale les à-coups des deux côtés.
+
 ## Connexion et transport
 
 `VERSION` contient le numéro commun au lanceur et au salon. Le contrôle de

@@ -118,19 +118,50 @@ class RenderStateReader:
         self.bridge=bridge
         self.identity=None
         self.supported=False
+        # Mesh object -> its visibility bit index, read once per object.
+        self._indices={}
 
     def _visible(self,root,mesh):
+        return self._visible_meshes(root,(mesh,))[0]
+
+    def _mesh_index(self,obj):
         b=self.bridge
-        count=b.read_u32(root+0x5C)
-        table=b.read_u32(root+0x64)
-        flags=b.read_u32(root+0x28)
-        if not _integer(count,1,1024) or not _integer(mesh,0,count-1) or not _heap(table) or not _heap(flags):return None
-        obj=b.read_u32(table+mesh*4)
+        # A restarted game reuses addresses for other objects.
+        if self._indices.get('pid',b.attached_pid)!=b.attached_pid:self._indices={}
+        self._indices['pid']=b.attached_pid
+        if obj in self._indices:return self._indices[obj]
         descriptor=b.read_u32(obj+0x90) if _heap(obj) else None
         index=b.read_u16(descriptor+4) if _heap(descriptor) else None
         if not _integer(index,0,32767):return None
-        bits=b.read_u8(flags+(index>>3))
-        return bool(bits&(1<<(index&7))) if bits is not None else None
+        if len(self._indices)>=512:self._indices.clear()
+        self._indices[obj]=index
+        return index
+
+    def _visible_meshes(self,root,meshes):
+        """Visibility of each mesh (None: unreadable) in three requests for all
+        of them; the bit index of a mesh object is read once (25/10: two meshes
+        cost 14 requests per snapshot)."""
+        b=self.bridge;meshes=list(meshes);none=[None]*len(meshes)
+        raw=b.read_memory(root+0x28,0x40) if _heap(root) else None
+        if not raw or len(raw)!=0x40:return none
+        flags=struct.unpack_from('<I',raw,0)[0]
+        count=struct.unpack_from('<I',raw,0x5C-0x28)[0]
+        table=struct.unpack_from('<I',raw,0x64-0x28)[0]
+        if not _integer(count,1,1024) or not _heap(table) or not _heap(flags):return none
+        wanted=sorted({m for m in meshes if _integer(m,0,count-1)})
+        if not wanted:return none
+        low,high=wanted[0],wanted[-1]
+        objs=b.read_memory(table+low*4,(high-low+1)*4)
+        if not objs or len(objs)!=(high-low+1)*4:return none
+        indices={}
+        for mesh in wanted:
+            index=self._mesh_index(struct.unpack_from('<I',objs,(mesh-low)*4)[0])
+            if index is not None:indices[mesh]=index
+        if not indices:return none
+        first,last=min(indices.values())>>3,max(indices.values())>>3
+        bits=b.read_memory(flags+first,last-first+1)
+        if not bits or len(bits)!=last-first+1:return none
+        return [bool(bits[(indices[m]>>3)-first]&(1<<(indices[m]&7))) if m in indices else None for m in meshes]
 
     def _visible_batch(self,root):
         b=self.bridge
@@ -148,18 +179,16 @@ class RenderStateReader:
         result=[]
         for obj in objs:
             if not _heap(obj):return None
-            desc=b.read_u32(obj+0x90)
-            if not _heap(desc):return None
-            idx=b.read_u16(desc+4)
+            idx=self._mesh_index(obj)
             if not _integer(idx,0,255):return None
             bits=flag_bytes[idx>>3]
             result.append(bool(bits&(1<<(idx&7))))
         return result
 
-    def _phase(self,animation,expected):
+    def _phase(self,animation,expected,header=None):
         b=self.bridge
-        header=b.read_memory(animation,0x18) if _heap(animation) else None
-        if not header or len(header)!=0x18:return None
+        if header is None:header=b.read_memory(animation,0x18) if _heap(animation) else None
+        if not header or len(header)<0x18:return None
         count=struct.unpack_from('<I',header,0xC)[0]
         active=struct.unpack_from('<I',header,0x14)[0]
         # A blend or a concurrent native switch must not drop the transform,
@@ -185,7 +214,7 @@ class RenderStateReader:
         b=self.bridge
         identity=(b.attached_pid,b.attached_title_id)
         if identity!=self.identity:
-            self.identity=identity
+            self.identity=identity;self._indices={}
             self.supported=all(b.read_memory(at,len(data))==data for at,data in FINGERPRINTS.items())
         if not self.supported:return {}
         model=b.read_u32(player+0x600)
@@ -197,30 +226,37 @@ class RenderStateReader:
         if not transform or len(transform)!=60:return {}
         scale=list(struct.unpack_from('<3f',transform))
         matrix=list(struct.unpack_from('<12f',transform,12))
-        layers=[]
+        layers=[];transitions=[]
         for slot,expected in zip((0x4C,0x6C),expected_ids):
-            layers.append(self._phase(word(slot),expected))
+            # Phase header and crossfade duration (+78, see _transition_frames) in one request.
+            animation=word(slot)
+            head=b.read_memory(animation,0x7C) if _heap(animation) else None
+            head=head if head and len(head)==0x7C else None
+            layers.append(self._phase(animation,expected,head) if head else None)
+            frames=struct.unpack_from('<I',head,0x78)[0] if head else None
+            transitions.append(frames if _integer(frames,0,60) else 0)
         # Legacy wire field "shield" is the Ravio-bracelet variant. The body
         # routines control sheath/bracelet; held weapons are separate G3Ds.
         shield=word(0x20)
         state=b.read_u32(shield+0x14) if _heap(shield) else None
         shield_frame=b.read_f32(state+8) if _heap(state) else None
         if not _number(shield_frame,0,2) or int(shield_frame)!=shield_frame:return {}
-        sword_visible=self._visible(root,word(0xA4))
-        shield_visible=self._visible(root,word(0xA8))
+        sword_visible,shield_visible=self._visible_meshes(root,(word(0xA4),word(0xA8)))
         # Native updateModel reads these cosmetic inputs; they are never written.
-        equipment=b.read_memory(player+0x434,0x84)
-        if not equipment or len(equipment)!=0x84:return {}
-        speed=b.read_f32(player+0x5B0)
+        # Equipment +434, speed +5B0 and merge byte +6BC in one request.
+        block=b.read_memory(player+0x434,0x28C)
+        if not block or len(block)!=0x28C:return {}
+        equipment=block[:0x84]
+        speed=struct.unpack_from('<f',block,0x5B0-0x434)[0]
         # The native presentation branch at 1DD598/1DD5A0 uses this exact
         # interpolation factor, rather than one animation/action identifier.
-        merged=_number(speed,0,1) and speed!=1.0 and b.read_u8(player+0x6BC)==1
+        merged=_number(speed,0,1) and speed!=1.0 and block[0x6BC-0x434]==1
         value=dict(v=RENDER_VERSION,matrix=matrix,scale=scale,layers=layers,
             sword=struct.unpack_from('<I',equipment)[0],sword_visible=sword_visible,
             shield=int(shield_frame),shield_visible=shield_visible,
             gloves=struct.unpack_from('<I',equipment,0x78)[0],
             boots=bool(struct.unpack_from('<I',equipment,0x80)[0]),speed=speed,merged=merged)
-        value['transition_frames']=[self._transition_frames(word(slot)) for slot in (0x4C,0x6C)]
+        value['transition_frames']=transitions
         if merged:
             from src.memory.wall_state import read_wall_state
             wall=read_wall_state(self,player)

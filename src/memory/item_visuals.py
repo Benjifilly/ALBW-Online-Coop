@@ -11,7 +11,7 @@ import struct
 import threading
 import time
 
-from src.memory.equipment_model import resource_name, EquipmentUnavailable
+from src.memory.equipment_model import resource_name, resource_name_of, read_model, EquipmentUnavailable
 from src.memory.native_jobs import RenderJob as Job, NativeJobRejected, PRIVATE_SIZE
 from src.memory.remote_model import MAILBOX
 from src.memory.render_state import _heap, _number, RenderStateReader
@@ -87,20 +87,27 @@ class ItemVisualReader:
         self.bridge=bridge;self.mesh_reader=RenderStateReader(bridge)
 
     def read(self,player):
+        """The same checks as _source, with every wrapper (+630) and inventory
+        variant (+434) in one request and each model in one (25/10)."""
         result=[];b=self.bridge
+        block=b.read_memory(player+0x434,0x22C) if _heap(player) else None
+        if not block or len(block)!=0x22C:return result
         for profile in ITEM_PROFILES:
-            source=_source(b,player,profile)
-            if source is None:continue
-            wrapper,root,variant=source
+            wrapper=struct.unpack_from('<I',block,0x630-0x434+profile.slot*4)[0]
+            raw=b.read_memory(wrapper,12) if _heap(wrapper) else None
+            if not raw or len(raw)!=12:continue
+            vtable,root,owner=struct.unpack('<3I',raw)
+            if vtable!=profile.wrapper_vtable or owner!=player+0x40C:continue
+            model=read_model(b,root)
             # Hidden tools do not need to inflate every player snapshot.
-            if b.read_u8(root+0x30)!=1:continue
-            raw=b.read_memory(root+0x74,60)
+            if model is None or model[0]!=0x6EBEF0 or model[1]!=1:continue
+            if resource_name_of(b,model[2])!=profile.resource:continue
+            variant=struct.unpack_from('<I',block,profile.inventory*4)[0]
+            if not 0<=variant<=3:continue
             meshes=self.mesh_reader._visible_batch(root)
-            if not raw or len(raw)!=60 or meshes is None or len(meshes)!=profile.meshes:continue
+            if meshes is None or len(meshes)!=profile.meshes:continue
             if b.read_u32(wrapper+4)!=root or b.read_u8(root+0x30)!=1:continue
-            item=dict(kind=profile.kind,variant=variant,visible=True,
-                scale=list(struct.unpack_from('<3f',raw)),
-                matrix=list(struct.unpack_from('<12f',raw,12)),meshes=meshes)
+            item=dict(kind=profile.kind,variant=variant,visible=True,scale=model[3],matrix=model[4],meshes=meshes)
             if validate_item_visuals([item]) is not None:result.append(item)
         return result
 

@@ -33,29 +33,55 @@ def validate_equipment(value):
     return clean
 
 
+# Kept on each bridge: (game process, resource, its BCH data) -> model name. A
+# loaded resource keeps its name; two of the four requests are skipped (25/10).
+
+
 def resource_name(bridge,root):
     resource=bridge.read_u32(root+0x50) if _heap(root) else 0
+    return resource_name_of(bridge,resource)
+
+
+def resource_name_of(bridge,resource):
     raw=bridge.read_u32(resource+8) if _heap(resource) else 0
-    name=bridge.read_u32(raw+0x84) if _heap(raw) else 0
+    if not _heap(raw):return None
+    names=vars(bridge).setdefault('_resource_names',{}) if hasattr(bridge,'__dict__') else {}
+    key=(getattr(bridge,'attached_pid',None),resource,raw)
+    if key in names:return names[key]
+    name=bridge.read_u32(raw+0x84)
     # Packed BCH strings are byte-aligned, unlike the structures above.
     text=bridge.read_memory(name,16) if type(name) is int and 0x08000000<=name<0x1F000000-16 else None
     if not text:return None
-    return text.split(b'\0',1)[0].decode('ascii',errors='replace')
+    value=text.split(b'\0',1)[0].decode('ascii',errors='replace')
+    if len(names)>=512:names.clear()
+    names[key]=value
+    return value
+
+
+MODEL_BLOCK=0xB0  # G3D root: vtable +0, shown +30, resource +50, scale/matrix +74
+
+
+def read_model(bridge,root):
+    """(vtable, shown byte, resource, scale, matrix) of a G3D root in one request."""
+    block=bridge.read_memory(root,MODEL_BLOCK) if _heap(root) else None
+    if not block or len(block)!=MODEL_BLOCK:return None
+    return (struct.unpack_from('<I',block)[0],block[0x30],struct.unpack_from('<I',block,0x50)[0],
+            list(struct.unpack_from('<3f',block,0x74)),list(struct.unpack_from('<12f',block,0x80)))
 
 
 def read_equipment(bridge,player):
+    wrappers=bridge.read_memory(player+0x630,0x2C)
+    if not wrappers or len(wrappers)!=0x2C:return None
     result=[]
     for kind,slot,names in GEAR:
-        obj=bridge.read_u32(player+0x630+slot*4)
+        obj=struct.unpack_from('<I',wrappers,slot*4)[0]
         root=bridge.read_u32(obj+4) if _heap(obj) else 0
-        if not _heap(root) or bridge.read_u32(root)!=0x6EBEF0:return None
-        name=resource_name(bridge,root)
-        if name not in names:return None
-        transform=bridge.read_memory(root+0x74,60)
-        mode=bridge.read_u8(root+0x30)
-        if not transform or len(transform)!=60 or mode not in (0,1):return None
-        result.append(dict(kind=kind,variant=names.index(name),visible=bool(mode),
-            scale=list(struct.unpack_from('<3f',transform)),matrix=list(struct.unpack_from('<12f',transform,12))))
+        model=read_model(bridge,root)
+        if model is None or model[0]!=0x6EBEF0:return None
+        _,mode,resource,scale,matrix=model
+        name=resource_name_of(bridge,resource)
+        if name not in names or mode not in (0,1):return None
+        result.append(dict(kind=kind,variant=names.index(name),visible=bool(mode),scale=scale,matrix=matrix))
     return validate_equipment(result)
 
 

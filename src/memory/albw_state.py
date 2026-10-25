@@ -200,7 +200,9 @@ class ALBWMemoryController:
         return (vtable == 0x6E8F7C and owner == self.player_ptr + 0x40C and self._valid_pointer(root)
                 and self.bridge.read_u8(root + 0x30) == 1)
 
-    def read_snapshot(self, player_id: str, name: str, tunic_color: str) -> PlayerSnapshot:
+    def read_snapshot(self, player_id: str, name: str, tunic_color: str, visual: bool = True) -> PlayerSnapshot:
+        """visual=False skips render_state, most of a snapshot's requests:
+        only the sent pose needs it (main.pose_loop)."""
         snap = PlayerSnapshot(player_id=player_id, name=name, tunic_color=tunic_color)
         self.last_snapshot = snap
         if not self.bridge.auto_attach_albw():
@@ -280,6 +282,7 @@ class ALBWMemoryController:
                 for name, index in zip(('animation_id','upper_animation_id'), ids):
                     if index is not None and 0<=index<176:
                         setattr(snap,name,index)
+            if snap.pose_verified and visual:
                 from src.memory.render_state import RenderStateReader
                 if not hasattr(self,'_render_reader'):
                     self._render_reader=RenderStateReader(self.bridge)

@@ -35,12 +35,40 @@ def compare_surveys(first,second):
         only_second=[list(k) for k in sorted(b.keys()-a.keys())])
 
 
+def _static(profile):
+    return 0x100000<=profile<0x7B0000 and profile%4==0
+
+
 class ActorSurvey:
-    def __init__(self,bridge):self.bridge=bridge
+    """One request per actor: its header holds handle, profile, vtable and
+    placement. The executable is checked once per game process, and the type
+    of a static profile (executable data) is read once (25/10: four requests
+    per actor made the survey 140 of a snapshot's 305 requests)."""
+
+    def __init__(self,bridge):
+        self.bridge=bridge;self._identity=None;self._kinds={}
+
+    def _validated(self):
+        b=self.bridge;identity=(getattr(b,'attached_pid',None),b.attached_title_id)
+        if identity==self._identity:return True
+        if b.attached_title_id!=TITLE_ID_EUR:return False
+        lookup,kind=b.read_memory(0x52FB78,16),b.read_memory(0x588BBC,12)
+        # A failed read is checked again next time; a different executable stays refused.
+        if lookup!=LOOKUP_SIGNATURE or kind!=TYPE_SIGNATURE:return False
+        self._identity=identity;self._kinds={}
+        return True
+
+    def _kind(self,profile):
+        if profile in self._kinds:return self._kinds[profile]
+        kind=self.bridge.read_u32(profile+8)
+        if kind is not None and _static(profile):
+            if len(self._kinds)>=4096:self._kinds.clear()
+            self._kinds[profile]=kind
+        return kind
 
     def read(self,room):
         b=self.bridge
-        if b.attached_title_id!=TITLE_ID_EUR or b.read_memory(0x52FB78,16)!=LOOKUP_SIGNATURE or b.read_memory(0x588BBC,12)!=TYPE_SIGNATURE:
+        if not self._validated():
             raise ValueError('Liste d’acteurs non validée pour cette version du jeu.')
         owner=b.read_u32(0x706E20)
         if not _heap(owner):raise ValueError('Gestionnaire de monde indisponible.')
@@ -56,13 +84,15 @@ class ActorSurvey:
             header=b.read_memory(actor,0x2D8)
             if not header or len(header)!=0x2D8 or header[0x2D7]:continue
             handle,profile=struct.unpack_from('<2I',header,0x2CC)
-            valid_profile=_heap(profile) or (0x100000<=profile<0x7B0000 and profile%4==0)
+            valid_profile=_heap(profile) or _static(profile)
             if not handle or handle>>22!=slot or not valid_profile:continue
-            kind=b.read_u32(profile+8)
+            known=profile in self._kinds
+            kind=self._kind(profile)
             xyz=struct.unpack_from('<3f',header,8)
             if kind is None or not all(math.isfinite(v) and abs(v)<=1e6 for v in xyz):continue
-            # Actor destruction/recycling can occur while reading through RPC.
-            if b.read_u32(actor+0x2CC)!=handle or b.read_u8(actor+0x2D7)!=0:continue
+            # Actor destruction/recycling can occur between two RPC reads; one
+            # header read is self-consistent.
+            if not known and (b.read_u32(actor+0x2CC)!=handle or b.read_u8(actor+0x2D7)!=0):continue
             actors.append(dict(handle=handle,type=kind,placement_id=struct.unpack_from('<h',header,0x58)[0],
                 initial_position=list(xyz),vtable=struct.unpack_from('<I',header)[0]))
         return dict(room=list(room),actors=actors,slots=len(data)//4)

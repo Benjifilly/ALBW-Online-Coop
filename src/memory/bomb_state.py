@@ -278,6 +278,7 @@ class BombStateReader:
         self.candidates = []; self.ids = {}; self.next_id = 0
         self.explosions = {}; self.effect_banks = []; self.error = ''
         self.player = None; self.shooters = {}; self.chains = {}
+        self.survey = ActorSurvey(bridge)
 
     def _executable(self):
         b = self.bridge
@@ -402,7 +403,10 @@ class BombStateReader:
         if identity != self.identity:
             self.identity = identity; self.next_survey = 0; self.candidates = []
             self.ids.clear(); self.explosions.clear(); self.next_id = 0; self.error = ''
-        self.supported = self._executable()
+            self.supported = False
+        # Once per game process; a failed read is checked again next time.
+        if not self.supported:
+            self.supported = self._executable()
         self.effect_banks = []
         if room != self.room:
             self.room = room; self.next_survey = 0; self.candidates = []
@@ -415,7 +419,7 @@ class BombStateReader:
             return []
         if now >= self.next_survey:
             try:
-                survey = ActorSurvey(b).read(room)
+                survey = self.survey.read(room)
                 self.candidates = [(a['handle'], a['type']) for a in survey['actors']
                     if a['type'] in PROJECTILES and a['vtable'] == PROJECTILES[a['type']].vtable][:32]
             except ValueError:
