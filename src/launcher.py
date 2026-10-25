@@ -305,6 +305,7 @@ class Screen:
         items += [("local", "Essayer à deux sur ce PC", "Deux Azahar côte à côte"),
                   ("paths", "Choisir Azahar et le jeu", "Glisser-déposer les fichiers"),
                   ("refresh", "Vérifier à nouveau", ""),
+                  ("report", "Créer un rapport", "Un fichier à envoyer au développeur en cas de problème"),
                   ("folder", "Ouvrir le dossier du mod", ""),
                   ("quit", "Quitter", "")]
         return items
@@ -589,8 +590,22 @@ def report_crash(emulator, companion, opened):
     logs = [p for p in (ROOT / ".local/logs").glob("companion-*.log") if p.stat().st_mtime >= opened - 1]
     if logs:
         print(f"  {MUTED}Journal du compagnon : {max(logs, key=lambda p: p.stat().st_mtime).relative_to(ROOT)}{RESET}")
+    print(f"  {MUTED}« Créer un rapport », dans le menu, prépare un fichier à envoyer au développeur.{RESET}")
     ask("Entrée pour revenir au menu.")
     return True
+
+
+def create_report(screen):
+    """The title screen works even when the in-game menu never opens."""
+    from src import report
+    print(f"\n  {GOLD}◐{RESET} {PALE}Création du rapport…{RESET}")
+    try:
+        path = report.create(checks=screen.status.checks if screen.status else None)
+    except Exception as exc:
+        screen.say(f"Rapport impossible : {type(exc).__name__}: {exc}", "bad")
+        return
+    report.reveal(path)
+    screen.say(f"Rapport créé : {path.name}, dans le dossier ouvert. Envoyez-le au développeur.", "ok")
 
 
 def run():
@@ -628,6 +643,7 @@ def run():
                     background("-m", "src.local_session")
                     screen.say("Fenêtre d’essai à deux ouverte.", "ok")
                 elif action == "paths":choose_paths(screen)
+                elif action == "report":create_report(screen)
                 elif action == "folder":os.startfile(ROOT)
                 elif action == "refresh":screen.say("Vérifications à jour.", "ok")
                 if action in ("rpc", "paths", "refresh", "play", "host", "join"):

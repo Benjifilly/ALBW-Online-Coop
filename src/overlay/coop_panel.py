@@ -135,6 +135,7 @@ class PageStack(QWidget):
 
 class CoopPanel(QFrame):
     probe_finished=pyqtSignal(object,object)
+    report_finished=pyqtSignal(object)
 
     def __init__(self, overlay):
         super().__init__(overlay)
@@ -148,6 +149,7 @@ class CoopPanel(QFrame):
         self._compact = None
         self._probe_ticket=None
         self.probe_finished.connect(self._joined_probe)
+        self.report_finished.connect(self._report_created)
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 12)
         root.setSpacing(0)
@@ -397,6 +399,8 @@ class CoopPanel(QFrame):
             row.addWidget(choice)
         self.log_filter.button(0).setChecked(True)
         row.addStretch(1)
+        self.btn_report = button("Créer un rapport", self.create_report)
+        row.addWidget(self.btn_report)
         self.btn_copy = button("Copier", self.copy_logs)
         row.addWidget(self.btn_copy)
         layout.addLayout(row)
@@ -522,6 +526,28 @@ class CoopPanel(QFrame):
         # One paste is enough to diagnose another PC: the journal, then each service's state.
         QApplication.clipboard().setText("\n".join(self._logs) + "\n\n" + session_summary(self._state))
         self.show_message("Journal et état des services copiés.")
+
+    def create_report(self):
+        """One zip on the Desktop with what a diagnosis of this PC needs (src/report.py)."""
+        self.btn_report.setEnabled(False)
+        self.show_message("Création du rapport…")
+        state, journal = dict(self._state), list(self._logs)
+
+        def work():
+            from src.report import create
+            try:result = create(state=state, journal=journal)
+            except Exception as exc:result = exc
+            self.report_finished.emit(result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _report_created(self, result):
+        self.btn_report.setEnabled(True)
+        if isinstance(result, Exception):
+            return self.show_message(f"Rapport impossible : {type(result).__name__}: {result}", error=True)
+        from src.report import reveal
+        reveal(result)
+        self.show_message(f"Rapport créé : {result.name}, dans le dossier qui vient de s’ouvrir. "
+                          "Envoyez ce fichier au développeur.")
 
     def show_message(self, text, error=False):
         self.message.setText(text)

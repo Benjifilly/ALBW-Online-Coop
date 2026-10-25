@@ -295,6 +295,18 @@ fenêtre et indiquez les résolutions et les agrandissements des deux écrans.
 Le **journal** du menu coop explique ce qui se passe et peut être copié pour
 signaler un problème.
 
+### Envoyer un rapport
+
+**F8 → Journal → Créer un rapport**, ou **Créer un rapport** sur l'écran
+d'accueil si le menu ne s'ouvre pas, dépose un fichier
+`rapport-albw-coop-….zip` sur le Bureau et ouvre son dossier. Envoyez ce
+fichier au développeur : il contient les versions du mod et d'Azahar, les
+réglages utiles d'Azahar, les écrans, les journaux du compagnon, le journal
+d'Azahar et les plantages notés par Windows. Rien n'est envoyé tout seul. Le
+dossier utilisateur Windows y est masqué et le compte en ligne d'Azahar n'est
+jamais lu ; les codes de salon et adresses restent, pour diagnostiquer la
+connexion.
+
 ## 🔧 Pour les développeurs
 
 [ARCHITECTURE.md](ARCHITECTURE.md) explique comment tout fonctionne. Le code
