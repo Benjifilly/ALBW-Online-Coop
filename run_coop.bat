@@ -29,9 +29,10 @@ rem Ce bloc reste en memoire si la mise a jour remplace ce fichier.
         exit /b
     )
 )
-.venv\Scripts\python.exe -c "import os; os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'; import PyQt6.QtWidgets, pygame" >nul 2>&1
+rem src\install_check.py liste chaque module du mod (PyQt6, pygame, pywin32).
+.venv\Scripts\python.exe -m src.install_check >nul 2>&1
 if errorlevel 1 (
-    echo   Installation des composants : PyQt6, pygame...
+    echo   Installation des composants : PyQt6, pygame, pywin32...
     .venv\Scripts\python.exe -m pip install --disable-pip-version-check -r requirements.txt
     if errorlevel 1 goto setup_error
 )

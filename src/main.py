@@ -461,6 +461,9 @@ def main() -> None:
         from src.version import VERSION
         log = orchestrator.session_log
         log.write(f"Session {VERSION} · {time.strftime('%d/%m/%Y')} · {' '.join(sys.argv[1:])}")
+        # A broken copy says so first, in the journal a friend copies.
+        from src.install_check import problems
+        for line in problems():orchestrator.add_log(line)
         record = lambda kind, value, trace: log.write("".join(traceback.format_exception(kind, value, trace)))
         previous = sys.excepthook
         sys.excepthook = lambda *exc: (record(*exc), previous(*exc))

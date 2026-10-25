@@ -221,12 +221,18 @@ def safely(check, fallback):
 def gather():
     from src.local_session import discover_paths, identify_game, settings_at
     from src.rpc.azahar_bridge import SUPPORTED_TITLE_IDS
+    from src.install_check import damaged_binaries, missing_modules
     checks = []
+    missing = safely(missing_modules, [])
     try:
         import PyQt6.QtCore as qt
+        if missing:raise ImportError
         checks.append(Check("Composants", "ok", f"Python {sys.version.split()[0]} · PyQt {qt.PYQT_VERSION_STR}"))
     except ImportError:
-        checks.append(Check("Composants", "bad", "PyQt6 manquant : relancez run_coop.bat"))
+        checks.append(Check("Composants", "bad", (", ".join(missing) or "PyQt6") + " manquant : relancez run_coop.bat"))
+    damaged = safely(damaged_binaries, [])
+    checks.append(Check("Fichiers", "bad" if damaged else "ok",
+                        f"{len(damaged)} natif(s) abîmé(s) : relancez run_coop.bat" if damaged else "fichiers natifs intacts"))
     emulator, game = discover_paths()
     status = Status(checks, emulator=emulator, game=game, version=version())
     if emulator and Path(emulator).is_file():

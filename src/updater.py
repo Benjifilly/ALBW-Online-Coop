@@ -135,6 +135,11 @@ def latest(root=ROOT):
         if version_tuple(remote)<version_tuple(local):return None
         changed=version_tuple(remote)>version_tuple(local) or installed is not None and revision!=installed
         if not changed and installed is None:changed=not zip_revision_matches(root,revision)
+        # Une copie ZIP aux fichiers natifs abîmés (copie partielle, antivirus)
+        # réinstalle sa propre révision ; une copie Git reste à Git.
+        from src.install_check import damaged_binaries
+        repair=[] if head else damaged_binaries(root/'src'/'memory')
+        if repair:changed=True
         if not changed:
             if not stamp.exists():_atomic_write(stamp,json.dumps(dict(revision=revision)).encode())
             return None
@@ -144,7 +149,7 @@ def latest(root=ROOT):
             title=str(row['commit']['message']).strip().split('\n',1)[0].strip()
             if title:news.append(title)
         return dict(version=remote,revision=revision,url=f'https://codeload.github.com/{REPO}/zip/{revision}',
-                    local=local,installed=installed,date=commits[0]['commit']['committer']['date'],
+                    local=local,installed=installed,date=commits[0]['commit']['committer']['date'],repair=repair,
                     news=news,complete=installed is not None and any(row.get('sha')==installed for row in commits))
     except (OSError,ValueError,KeyError,TypeError,UnicodeError,subprocess.SubprocessError):return None
 
@@ -273,13 +278,18 @@ def owner_label(name):
 
 def panel(release):
     """Encadré du lanceur : versions, puis ce qui change."""
-    inner=BOX-4;title=' Mise à jour disponible ';installed=release.get('installed')
+    inner=BOX-4;installed=release.get('installed');repair=release.get('repair') or []
+    same=installed==release['revision']
+    title=' Réparation du mod ' if repair and same else ' Mise à jour disponible '
     def row(text='',colour=PALE):
         text=clip(text,inner);say(f'  {GOLD}│{RESET} {colour}{text}{RESET}{" "*(inner-len(text))} {GOLD}│{RESET}')
     say();say(f'  {GOLD}╭─{RESET}{PALE}{BOLD}{title}{RESET}{GOLD}{"─"*(BOX-3-len(title))}╮{RESET}')
     row(f"{'Installée':<12}{release.get('local','')}"+(f' · {installed[:7]}' if installed else ''),MUTED)
     stamp=when(release.get('date'))
-    row(f"{'Nouvelle':<12}{release['version']} · {release['revision'][:7]}"+(f' · {stamp}' if stamp else ''),GREEN)
+    row(f"{'Réinstallée' if same else 'Nouvelle':<12}{release['version']} · {release['revision'][:7]}"
+        +(f' · {stamp}' if stamp else ''),GREEN)
+    if repair:
+        row(f"{'Abîmés':<12}{len(repair)} fichier(s) natif(s) : "+', '.join(repair[:3])+(' …' if len(repair)>3 else ''),RED)
     news=release.get('news') or []
     if news:
         row();row('Nouveautés' if installed else 'Dernier changement',GOLD)

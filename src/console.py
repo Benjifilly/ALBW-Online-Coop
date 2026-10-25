@@ -52,7 +52,7 @@ COLOR = _supports_color()
 
 # Message tones, shared with the in-game journal.
 PROBLEM_WORDS = ("erreur", "impossible", "interromp", "échec", "refus", "incompatible", "non confirm",
-                 "indisponible", "ne répond", "sautée", "non affich", "inattendu", "invalide", "perdu")
+                 "indisponible", "ne répond", "sautée", "non affich", "inattendu", "invalide", "perdu", "manquant")
 GOOD_WORDS = ("a rejoint", "connecté", "prête", "prêt ", "activé", "actif", "ouvert", "reconnecté")
 
 

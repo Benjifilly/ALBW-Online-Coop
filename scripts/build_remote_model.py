@@ -172,9 +172,17 @@ def build():
     progress,_=Ks(KS_ARCH_ARM,KS_MODE_ARM).asm((folder/'shared_progress.arm').read_text(),addr=0)
     if len(progress)>0x3000:raise ValueError('Shared progress code overlaps its capture ring')
     (folder/'shared_progress.bin').write_bytes(bytes(progress))
+    chain,_=Ks(KS_ARCH_ARM,KS_MODE_ARM).asm((folder/'wall_chain.arm').read_text(),addr=0)
+    if len(chain)>0x100:raise ValueError('Wall chain checker exceeds its page slot')
+    (folder/'wall_chain.bin').write_bytes(bytes(chain))
+    from src.memory.enemy_impact_trial import compile_payload
+    (folder/'enemy_impact_trial.bin').write_bytes(compile_payload())
     (folder/'world_payload.bin').write_bytes(payload)
     (folder/'attack_effects.bin').write_bytes(auxiliary)
     (folder / 'remote_model.bin').write_bytes(data)
+    # Every player's copy is checked against it (install_check, updater repair).
+    from src.install_check import write_manifest
+    write_manifest(folder)
     print(len(data), 'bytes', hashlib.sha256(data).hexdigest())
     return data
 
