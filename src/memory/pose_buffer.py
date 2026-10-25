@@ -44,17 +44,38 @@ def matrix_between(a,b,t):
     return result
 
 
-def _phases_between(a,b,t):
+def _frames_between(start,end,length,rate):
+    """Frames played from start to end in the direction the animation runs,
+    through its end when it looped (or restarted) meanwhile."""
+    delta=end-start
+    if length>1:
+        if rate>0 and delta<-.5:delta+=length
+        elif rate<0 and delta>.5:delta-=length
+    return delta
+
+
+def _wrap(frame,length):
+    return frame%length if length>1 and not 0<=frame<=length else frame
+
+
+def _phases_between(a,b,t,frames=2.0):
+    """Animation phases between two samples `frames` game frames apart.
+
+    Samples can arrive several hundred ms apart (25/10): the phase may then
+    have advanced far, or looped, and must still play instead of freezing.
+    """
     out=deepcopy(a)
     for i,(la,lb) in enumerate(zip(a,b)):
         if la and lb and la[0]==lb[0] and la[4]==lb[4]:
-            delta=lb[1]-la[1]
-            if abs(delta)<=max(4,abs(la[3])*8):
-                out[i]=[la[0],la[1]+delta*t,la[2]+(lb[2]-la[2])*t,la[3],la[4]]
+            length,rate=la[4],la[3]
+            delta=_frames_between(la[1],lb[1],length,rate)
+            if abs(delta)<=max(4,abs(rate)*8,abs(rate)*frames*1.5+4):
+                previous=_frames_between(la[2],lb[2],length,rate)
+                out[i]=[la[0],_wrap(la[1]+delta*t,length),_wrap(la[2]+previous*t,length),la[3],la[4]]
     return out
 
 
-def wall_between(a,b,t):
+def wall_between(a,b,t,frames=2.0):
     """Blend matched triangles only on the same verified physical plane."""
     if not a or not b or a['variant']!=b['variant'] or a['meshes']!=b['meshes']:return None
     sa,sb=a.get('surface'),b.get('surface')
@@ -77,7 +98,7 @@ def wall_between(a,b,t):
     out=deepcopy(a)
     out['matrix']=matrix_between(a['matrix'],b['matrix'],t)
     out['scale']=[x+(y-x)*t for x,y in zip(a['scale'],b['scale'])]
-    out['animations']=_phases_between(a['animations'],b['animations'],t)
+    out['animations']=_phases_between(a['animations'],b['animations'],t,frames)
     for key in ('positions','uv'):
         out['surface'][key]=[x+(y-x)*t for x,y in zip(sa[key],sb[key])]
     out['surface']['matrix']=matrix_between(sa['matrix'],sb['matrix'],t)
@@ -85,11 +106,46 @@ def wall_between(a,b,t):
 
 
 class PoseBuffer:
-    def __init__(self,delay=.05):
-        self.delay=delay;self.key=None;self.samples=deque(maxlen=12)
+    """Plays a peer's samples slightly in the past, interpolating between them.
+
+    The delay covers the gaps actually seen between this peer's samples. A
+    fixed 50 ms froze the companion, then jumped it, on 25/10: a laptop's
+    states arrived with 200-500 ms holes nearly every second. The delay grows
+    quickly to cover a new gap, shrinks slowly, and playback never runs
+    backwards. The gaps belong to the link: kept across rooms.
+    """
+    MIN_DELAY=.05
+    MAX_DELAY=.4
+    # Longer: a pause or a menu, not the link's jitter.
+    IDLE=1.5
+    HOLE=.15
+
+    def __init__(self,delay=MIN_DELAY):
+        self.delay=delay;self.key=None;self.samples=deque(maxlen=64)
+        self.gaps=deque(maxlen=120);self._arrived=None;self._played=None;self._clock=None
+        self.holes=0;self.worst=0.
+
+    def take_holes(self):
+        """(gaps over HOLE, longest gap) since the previous call, for the journal."""
+        result=self.holes,self.worst;self.holes=0;self.worst=0.
+        return result
 
     def clear(self):
-        self.key=None;self.samples.clear()
+        self.key=None;self.samples.clear();self._arrived=self._played=None
+
+    def wanted_delay(self):
+        if len(self.gaps)<10:return max(self.delay,self.MIN_DELAY)
+        gaps=sorted(self.gaps)
+        return min(self.MAX_DELAY,max(self.MIN_DELAY,gaps[int(len(gaps)*.95)]*1.1+.017))
+
+    def _follow(self,now):
+        """Move the delay toward the wanted one: playback at 65 % speed while it
+        grows, 110 % while it shrinks, never a jump."""
+        elapsed=min(.1,max(0.,now-self._clock)) if self._clock is not None else 0.
+        self._clock=now
+        want=self.wanted_delay()
+        if want>self.delay:self.delay=min(want,self.delay+.35*elapsed)
+        else:self.delay=max(want,self.delay-.1*elapsed)
 
     def sample(self,peer,now):
         render=peer.get('render_state',{})
@@ -99,20 +155,28 @@ class PoseBuffer:
         if key!=self.key or jump or not render:
             self.clear();self.key=key
         if not self.samples or peer!=self.samples[-1][1]:
+            gap=now-self._arrived if self._arrived is not None else None
+            if gap is not None and gap<self.IDLE:
+                self.gaps.append(gap)
+                if gap>self.HOLE:self.holes+=1;self.worst=max(self.worst,gap)
+            self._arrived=now
             self.samples.append((now,deepcopy(peer)))
+        self._follow(now)
         if len(self.samples)<2:return peer
         target=now-self.delay
+        if self._played is not None and target<self._played:target=self._played
+        self._played=target
         while len(self.samples)>2 and self.samples[1][0]<=target:self.samples.popleft()
         ta,a=self.samples[0];tb,b=self.samples[1]
         if target>=tb:return b
         if target<=ta:return a
-        t=(target-ta)/(tb-ta);out=deepcopy(a)
+        t=(target-ta)/(tb-ta);out=deepcopy(a);frames=(tb-ta)*60
         for k in ('x','y','z'):out[k]=a[k]+(b[k]-a[k])*t
         out['yaw']=a['yaw']+((b['yaw']-a['yaw']+math.pi)%math.tau-math.pi)*t
         ar,br=a.get('render_state'),b.get('render_state')
         if not ar or not br:return out
         if render.get('merged'):
-            wall=wall_between(ar.get('wall'),br.get('wall'),t)
+            wall=wall_between(ar.get('wall'),br.get('wall'),t,frames)
             if wall is None:
                 if not (ar.get('wall') or {}).get('surface') and (br.get('wall') or {}).get('surface'):
                     return b
@@ -124,7 +188,7 @@ class PoseBuffer:
         if ca and cb and ca['target']==cb['target']:
             out['render_state']['carried']=dict(ca,pos=[x+(y-x)*t for x,y in zip(ca['pos'],cb['pos'])])
         out['render_state']['scale']=[x+(y-x)*t for x,y in zip(ar['scale'],br['scale'])]
-        out['render_state']['layers']=_phases_between(ar['layers'],br['layers'],t)
+        out['render_state']['layers']=_phases_between(ar['layers'],br['layers'],t,frames)
         effects={e['id']:e for e in br.get('effects',())}
         for effect in out['render_state'].get('effects',()):
             other=effects.get(effect['id'])
@@ -149,7 +213,7 @@ class PoseBuffer:
                 bomb['pos']=[x+(y-x)*t for x,y in zip(bomb['pos'],other['pos'])]
                 bomb['scale']=[x+(y-x)*t for x,y in zip(bomb['scale'],other['scale'])]
                 if bomb.get('blink') and other.get('blink'):
-                    bomb['blink']=_phases_between([bomb['blink']],[other['blink']],t)[0]
+                    bomb['blink']=_phases_between([bomb['blink']],[other['blink']],t,frames)[0]
                 if bomb.get('chain') and len(bomb['chain'])==len(other.get('chain') or ()):
                     bomb['chain']=[matrix_between(x[:12],y[:12],t)+[p+(q-p)*t for p,q in zip(x[12:],y[12:])]
                                    for x,y in zip(bomb['chain'],other['chain'])]

@@ -57,6 +57,7 @@ class InGameAppearance:
         self._scroll=RoomScrollReader(bridge)
         self._presented_peer_id=None
         self._presented_frame=None
+        self._next_fluidity=0
         self._player=0;self._prewarm_retry=0
         # step() and the presentation thread never interleave renderer writes.
         self.present_lock=threading.RLock()
@@ -110,6 +111,17 @@ class InGameAppearance:
             message='Présentation sautée : '+str(exc)
             if message!=getattr(self,'_present_note',None):
                 self._present_note=message;self.log(message)
+
+    def _note_fluidity(self,peer,now):
+        """Once a minute, the holes in this peer's movements (25/10: a choppy
+        companion). The sender's own journal says whether its loop caused them."""
+        if now<self._next_fluidity:return
+        first=self._next_fluidity==0
+        self._next_fluidity=now+60
+        holes,worst=self._poses.take_holes()
+        if not first and holes>=5:
+            self.log(f"Mouvements de {peer.get('name') or 'votre ami'} irréguliers : {holes} trous de plus de "
+                     f"150 ms en 1 min (le plus long {worst*1000:.0f} ms), lissés sur {self._poses.delay*1000:.0f} ms.")
 
     def _present_carried(self,sample,create=True):
         """Place what this peer carries, from the same interpolated sample as its body."""
@@ -294,6 +306,7 @@ class InGameAppearance:
                         self._local_painting=None
             if peer and ready:
                 peer=self._poses.sample(peer,now)
+                self._note_fluidity(peer,now)
                 if self._allocation_blocked:
                     self.trial.hide()
                     if self.painting:self.painting.hide()

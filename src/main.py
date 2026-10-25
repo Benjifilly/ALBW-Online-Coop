@@ -50,6 +50,10 @@ class CoopOrchestrator(QObject):
         self.status_path = None
         self._next_status_write = 0
         self._next_network_send = 0
+        # This loop alone sends our Link's position: its pauses are the friend's stutters.
+        self._loop_times: List[float] = []
+        self._send_times: List[float] = []
+        self._next_loop_report = time.monotonic() + 60
         # The open menu keeps the pad: set by the overlay, held by the sync loop.
         self._menu_holds_input = False
         self._input_held = False
@@ -156,6 +160,7 @@ class CoopOrchestrator(QObject):
                     carried=self.shared_world.carried
                     if carried and snap.render_state:snap.render_state['carried']=carried
                     self.net.broadcast_state(snap)
+                    if snap.in_game:self._send_times.append(time.monotonic())
                 # A spectator is invisible: never drawn, nothing reacts to him.
                 peers = [p for p in all_peers if p.get('life','alive')!='ghost']
                 with self._memory_lock:
@@ -241,7 +246,26 @@ class CoopOrchestrator(QObject):
                     self.add_log(message, where(exc))
                     self._last_error = message
             self._write_status()
+            self._note_loop(frame_started)
             time.sleep(max(.001,1/60-(time.monotonic()-frame_started)))
+
+    def _note_loop(self, started):
+        """Once a minute, with friends connected: pauses in sending our position."""
+        now = time.monotonic()
+        self._loop_times.append(now - started)
+        if now < self._next_loop_report:
+            return
+        self._next_loop_report = now + 60
+        loops, sends = sorted(self._loop_times), self._send_times
+        self._loop_times, self._send_times = [], sends[-1:]
+        # Over 1.5 s: a loading screen or a menu, not a stutter.
+        pauses = [b - a for a, b in zip(sends, sends[1:]) if .15 < b - a < 1.5]
+        if len(pauses) >= 5 and self.net.get_active_peers():
+            pick = lambda share: loops[min(len(loops) - 1, int(len(loops) * share))] * 1000
+            self.add_log(f"Votre position part par à-coups : {len(pauses)} pauses de plus de 150 ms en 1 min "
+                         f"(la plus longue {max(pauses) * 1000:.0f} ms).",
+                         f"Boucle du compagnon : médiane {pick(.5):.0f} ms, p95 {pick(.95):.0f} ms, "
+                         f"max {loops[-1] * 1000:.0f} ms.")
 
     def present_loop(self) -> None:
         """Companion pose for each new game frame, beside the slower sync loop.
