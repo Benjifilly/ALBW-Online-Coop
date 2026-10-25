@@ -115,3 +115,30 @@ def raise_without_activation(hwnd):
     if not hwnd or not user32.IsWindow(hwnd):return False
     # Garder le HUD devant le plein écran, sans déplacer, redimensionner ni activer.
     return bool(user32.SetWindowPos(hwnd,wintypes.HWND(-1),0,0,0,0,0x0001|0x0002|0x0010|0x0200))
+
+
+user32.AttachThreadInput.argtypes=[wintypes.DWORD,wintypes.DWORD,wintypes.BOOL]
+user32.BringWindowToTop.argtypes=[wintypes.HWND]
+user32.ShowWindow.argtypes=[wintypes.HWND,ctypes.c_int]
+
+
+def bring_to_front(hwnd,api=user32,threads=kernel32):
+    """Put Azahar in front once, when the session starts from the console.
+
+    The menu only shows over the game in the foreground; launched from the
+    console, the console kept it and the menu waited for a click in the game
+    (25/10, a friend's PC). Windows lets the foreground input thread hand the
+    focus over: borrow it the time of the call.
+    """
+    if not hwnd or not api.IsWindow(hwnd):return False
+    foreground=api.GetForegroundWindow()
+    if foreground==hwnd:return True
+    theirs=api.GetWindowThreadProcessId(foreground,None) if foreground else 0
+    mine=threads.GetCurrentThreadId()
+    attached=bool(theirs and theirs!=mine and api.AttachThreadInput(mine,theirs,True))
+    try:
+        if api.IsIconic(hwnd):api.ShowWindow(hwnd,9)  # SW_RESTORE
+        api.BringWindowToTop(hwnd)
+        return bool(api.SetForegroundWindow(hwnd))
+    finally:
+        if attached:api.AttachThreadInput(mine,theirs,False)

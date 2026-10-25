@@ -134,6 +134,13 @@ def azahar_running():
     return azahar_pid() != 0
 
 
+def focus_azahar(pid):
+    """This Azahar's game window in front (the companion's menu needs it)."""
+    from src.overlay.window_tracker import bring_to_front, find_azahar_hwnd_and_pid
+    hwnd, _ = find_azahar_hwnd_and_pid(0, pid)
+    return bring_to_front(hwnd)
+
+
 OLD_AZAHAR = "Azahar trop ancien : installez 2126.2"
 
 
@@ -550,6 +557,9 @@ def play(screen, arguments=()):
         return False
     cursor(True)
     print(f"\n  {MUTED}Le compagnon s’ouvre. Fermer Azahar termine la session.{RESET}")
+    # The menu shows over the game in front; this console would keep the focus.
+    print(f"  {MUTED}Menu coop : F8, la fenêtre d’Azahar au premier plan.{RESET}")
+    safely(lambda: focus_azahar(pid), False)
     started, opened = time.monotonic(), time.time()
     companion = None
     try:
