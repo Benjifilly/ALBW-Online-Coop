@@ -92,10 +92,12 @@ class InGameAppearance:
                 wall=render.get('wall')
                 if (self.painting and isinstance(wall,dict) and wall.get('surface')
                         and wall.get('variant') in self.painting.models):
-                    self._publish_painting(sample,self._player,room)
+                    self._publish_painting(sample,self._player,room,present=True)
             else:
                 gear=render.get('equipment')
-                if gear and self.equipment and self.equipment.prepared(gear):self.equipment.publish(gear)
+                # Replaced local resources wait for step() to rebuild them.
+                if (gear and self.equipment and self.equipment.prepared(gear)
+                        and not self.equipment.stale()):self.equipment.publish(gear)
                 self._present_carried(sample,create=False)
             self._present_items(sample)
             if self.effects and self.effects.room==tuple(room) and not self.effects.retired():
@@ -303,6 +305,7 @@ class InGameAppearance:
                 # A failed surface read is not an instruction to display gear.
                 merged=peer.get('render_state',{}).get('merged',False)
                 if gear and not merged:
+                    if self.equipment and self.equipment.stale():self._rebuild_equipment()
                     if self.equipment is None:
                         from src.memory.equipment_model import PrivateEquipmentModel
                         self.equipment=PrivateEquipmentModel(self.trial,memory.player_ptr,(snapshot.course,snapshot.stage))
@@ -367,7 +370,7 @@ class InGameAppearance:
         self.state='visible'
         return True
 
-    def _publish_painting(self,peer,player,room):
+    def _publish_painting(self,peer,player,room,present=False):
         render=peer.get('render_state',{})
         state=render.get('wall')
         key=(player,tuple(room),peer.get('player_id'))
@@ -395,7 +398,10 @@ class InGameAppearance:
             if self.painting and not self.painting.hide():
                 raise RuntimeError('La peinture du compagnon ne peut pas être masquée.')
             return False
-        if self.painting and self.painting.stale():self._rebuild_painting()
+        if self.painting and self.painting.stale():
+            # Never close from the presentation thread: step() rebuilds it.
+            if present:return False
+            self._rebuild_painting()
         if self.painting is None:
             from src.memory.wall_model import PrivateWallModel
             self.painting=PrivateWallModel(self.trial,player,room)
@@ -437,6 +443,12 @@ class InGameAppearance:
         if not self.painting.close():raise RuntimeError('La peinture du compagnon attend son retrait.')
         self.painting=None;self._prewarm_retry=0
         self.log('Ressources murales de votre héros renouvelées : peinture du compagnon reconstruite.')
+
+    def _rebuild_equipment(self):
+        """Same for the sword and shield: they borrow this Link's own resources."""
+        if not self.equipment.close():raise RuntimeError('L’équipement du compagnon attend son retrait.')
+        self.equipment=None
+        self.log('Équipement de votre héros renouvelé : épée et bouclier du compagnon reconstruits.')
 
     def _publish_effects(self,peer,player,room):
         if not self._effects_supported:return

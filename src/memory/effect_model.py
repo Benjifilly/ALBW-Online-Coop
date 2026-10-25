@@ -300,4 +300,5 @@ class PrivateAttackEffects:
             for pointer in (*cache,bank,item['parser']):
                 if pointer:self.pool.jobs.call(Job.FREE,pointer,heap=self.pool.heap)
             del self.banks[kind]
-        return self.pool.close()
+        # Its own mailbox entry (+1FC) is cleared above; the painting's is not ours.
+        return self.pool.close(painting=False)

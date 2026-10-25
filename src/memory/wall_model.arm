@@ -1,6 +1,6 @@
 @ Private painting presentation. Control block is created locally, never from
 @ a network address. Every native pointer belongs to its separate render heap,
-@ except the local wall resources a painting borrows (wall_chain.arm).
+@ except the local resources paintings and equipment borrow (wall_chain.arm).
 .syntax unified
 .arm
 .fpu vfpv2
@@ -52,13 +52,14 @@ ldreq r0, [r0, #0x1c]
 cmpeq r0, #1
 beq wall_hide
 wall_check_enabled:
-@ A painting (mode 2+) borrows the local Link's wall resources: its own
-@ checker (wall_chain.arm, at +C0 in the private reserve) sets Z when they
-@ were replaced, and nothing is evaluated.
-cmp r10, #2
-ldrhs r12, [r4, #0xc0]
-blxhs r12
-beq wall_hide
+@ Held equipment (mode 0) and paintings (2+) borrow the local Link's own
+@ resources: their checker (wall_chain.arm, at +C0 in the private reserve)
+@ clears Z when those were replaced, and nothing is evaluated. Items and
+@ carried props (mode 1) belong to the scene's world, closed on any reload.
+cmp r10, #1
+ldrne r12, [r4, #0xc0]
+blxne r12
+bne wall_hide
 ldr r0, [r4, #8]
 cmp r0, #0
 beq wall_hide

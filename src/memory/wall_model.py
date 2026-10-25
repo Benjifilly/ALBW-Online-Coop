@@ -110,7 +110,7 @@ class PrivateWallModel:
         the companion entered a wall).
         """
         for item in self.models.values():
-            for address,value in item['chain']:
+            for address,value in item.get('chain',()):
                 if self.bridge.read_u32(address)!=value:return True
         return False
 
@@ -259,11 +259,12 @@ class PrivateWallModel:
     def keep_visible(self):
         return not self.control or self.bridge.write_u32(self.control+4,60)
 
-    def close(self):
+    def close(self,painting=True):
+        """painting=False: a pool lent to equipment never owns the painting's mailbox."""
         if self.uncertain or self.jobs.pending or self.fresco and self.fresco.uncertain:return False
         if self.allocation:
-            if not self.bridge.write_u32(MAILBOX+0x1F8,0):return False
-            if not self.bridge.write_u32(MAILBOX+0x158,0):return False
+            if painting and not self.bridge.write_u32(MAILBOX+0x1F8,0):return False
+            if painting and not self.bridge.write_u32(MAILBOX+0x158,0):return False
             if self.fresco:
                 if not self.fresco.close():return False
                 self.fresco=None

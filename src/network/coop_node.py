@@ -23,7 +23,7 @@ from src.network.datagrams import Datagrams,encode as datagrams
 from src.network import rendezvous
 
 DEFAULT_COOP_UDP_PORT = 45990
-PROTOCOL_VERSION = 21
+PROTOCOL_VERSION = 22
 PUNCH_SECONDS = 45        # how long the host opens its box toward a friend's reply code
 MAX_PLAYERS = 4
 PEER_TIMEOUT = 6.0
@@ -82,23 +82,10 @@ def validate_player(data):
         value = data.get(key)
         if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e7:
             return None
-    inventory, flags, cflags = data.get("inventory"), data.get("event_flags_hex", ""), data.get("course_flags_hex", "")
-    if not isinstance(inventory, list) or len(inventory) != 50 or not all(_integer(v, 0, 0xFFFFFFFF) for v in inventory):
-        return None
-    if not isinstance(flags, str) or len(flags) not in (0, 256):
-        return None
-    try:
-        bytes.fromhex(flags)
-    except ValueError:
-        return None
-    if not isinstance(cflags, str) or len(cflags) not in (0, 64, 96):
-        return None
-    try:
-        bytes.fromhex(cflags)
-    except ValueError:
-        return None
+    # Only the snapshot's own fields cross the network (inventory and story
+    # flags no longer do: nothing used them, and they were 60 % of a state).
     fields = PlayerSnapshot.__dataclass_fields__
-    clean = {key: deepcopy(data[key]) for key in fields if key in data and key != "unlocked_milestones"}
+    clean = {key: deepcopy(data[key]) for key in fields if key in data}
     clean["name"] = name.strip()
     if render is not None:clean['render_state']=render
     return clean

@@ -7,7 +7,7 @@ import struct
 from src.memory.native_jobs import RenderJob as Job
 from src.memory.remote_model import MAILBOX
 from src.memory.render_state import _heap, _number
-from src.memory.wall_model import PrivateWallModel
+from src.memory.wall_model import PrivateWallModel,CHAIN_OFFSET
 
 GEAR=(('sword',0,('SwordA','SwordB','SwordC','SwordD')),
       ('shield',10,('ShieldA','ShieldB')))
@@ -73,9 +73,13 @@ class PrivateEquipmentModel:
         wrapper=b.read_u32(self.player+0x630+slot*4)
         if not _heap(wrapper):raise RuntimeError('Équipement local indisponible.')
         candidates=[b.read_u32(wrapper+0x1C+i*4) for i in range(4)]
-        source=next((root for root in candidates if resource_name(b,root)==names[variant]),None)
+        index=next((i for i,root in enumerate(candidates) if resource_name(b,root)==names[variant]),None)
+        source=candidates[index] if index is not None else None
         if not source or b.read_u32(source)!=0x6EBEF0:raise EquipmentUnavailable('Variante d’équipement non chargée.')
         resource=b.read_u32(source+0x50);raw=b.read_u32(resource+8)
+        # Borrowed from this Link like a painting: checked every frame by
+        # wall_chain.arm and every step by stale(), as a continue rebuilds him.
+        chain=[(self.player+0x630+slot*4,wrapper),(wrapper+0x1C+index*4,source),(source+0x50,resource)]
         count=b.read_u32(source+0x5C)
         sizes=struct.unpack('<4I',self.pool._read(resource+0x4C,16))
         if b.read_u8(raw) not in (0,2) or count!=1 or any(size>0x10000 for size in sizes):
@@ -104,7 +108,7 @@ class PrivateEquipmentModel:
             raise
         if not self.pool.heap<=model<self.pool.allocation+0x200000 or b.read_u32(model+4)!=self.pool.heap:
             raise RuntimeError('Le modèle d’équipement est hors de sa réserve privée.')
-        self.pool.models[key]=dict(model=model)
+        self.pool.models[key]=dict(model=model,chain=chain)
         self.pool.uncertain=False
         self.pool.jobs.call(Job.REGISTER,model,0,0,heap=self.pool.heap)
         if b.read_u32(model+0x16C):raise RuntimeError('Callback d’équipement inattendu.')
@@ -140,8 +144,11 @@ class PrivateEquipmentModel:
                 self.pool.jobs.call(Job.SHOW_MESH,self.active[kind],0,0,heap=self.pool.heap)
                 self.pool.jobs.call(Job.REGISTER,self.active[kind],0,0,heap=self.pool.heap)
             self.active[kind]=model
-            control=bytearray(0xB0)
+            control=bytearray(0xF8)
             struct.pack_into('<4I',control,0,0x57414C4C,60,1,model)
+            chain=self.pool.models[(kind,item['variant'])]['chain']
+            struct.pack_into(f'<2I{2*len(chain)}I',control,0xC0,self.pool.allocation+CHAIN_OFFSET,len(chain),
+                             *(v for pair in chain for v in pair))
             struct.pack_into('<I',control,0x1C,self.sequence)
             struct.pack_into('<I',control,0x20,self.pool.allocation+0x900+index*4)
             struct.pack_into('<12f3f',control,0x24,*item['matrix'],*item['scale'])
@@ -154,11 +161,15 @@ class PrivateEquipmentModel:
             if not self.bridge.write_u32(MAILBOX+0x15C+index*4,address):raise RuntimeError('Publication d’équipement impossible.')
             self.controls[kind]=address
 
+    def stale(self):
+        """This Link's own sword or shield resources were replaced (a continue)."""
+        return self.pool.stale()
+
     def close(self):
         if self.pool.uncertain or self.pool.jobs.pending:return False
         for offset in (0x15C,0x160):
             if not self.bridge.write_u32(MAILBOX+offset,0):return False
-        return self.pool.close()
+        return self.pool.close(painting=False)
 
     def hide(self):
         if not self.pool.allocation:return True

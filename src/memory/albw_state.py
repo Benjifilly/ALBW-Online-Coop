@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 import struct
 import math
-from typing import Dict, List
+from typing import Dict
 from ..rpc.azahar_bridge import AzaharBridge, TITLE_ID_EUR
 
 COURSE_NAMES: Dict[int, str] = {
@@ -26,47 +26,6 @@ COURSE_NAMES: Dict[int, str] = {
     18: "Tour de l'Épreuve",
 }
 
-INVENTORY_SLOTS: Dict[int, str] = {
-    0: "Épée (Niveau)",
-    2: "Bombes",
-    3: "Boomerang",
-    4: "Arc",
-    6: "Marteau",
-    7: "Baguette des Sables",
-    8: "Baguette de Feu",
-    9: "Baguette de Glace",
-    10: "Baguette des Tornades",
-    11: "Grappin",
-    12: "Lanterne",
-    13: "Filet à Papillons",
-    16: "Fruit d'Escampette",
-    17: "Fruit de Foulard",
-    23: "Bracelet de Lavio (Fusion)",
-    27: "Amulette / Pendentif",
-    30: "Gant de Puissance",
-    31: "Tunique (Verte/Bleue/Rouge)",
-    45: "Flacon 1",
-    46: "Flacon 2",
-    47: "Flacon 3",
-    48: "Flacon 4",
-    49: "Flacon 5",
-}
-
-STORY_FLAGS_MAP: Dict[int, str] = {
-    177: "Pendentif du Courage",
-    249: "Pendentif de la Sagesse",
-    250: "Pouvoir de Fusion Murale (Yuga 1)",
-    289: "Pendentif de la Force",
-    375: "Excalibur (Master Sword)",
-    437: "Sage : Gulley",
-    473: "Sage : Oren",
-    505: "Sage : Seres",
-    529: "Sage : Osfala",
-    557: "Sage : Rosso",
-    581: "Sage : Irene",
-    617: "Sage : Impa",
-}
-
 
 @dataclass
 class RegionMemoryProfile:
@@ -81,7 +40,6 @@ class RegionMemoryProfile:
     fcram_hearts_addr: int
     actor_pos_offset: int = 0x28
     actor_yaw_offset: int = 0x38
-    player_inventory_offset: int = 0x434
     player_maiamai_offset: int = 0x508
     # Current and maximum HP are adjacent bytes (598/599), not 597/598.
     player_max_health_offset: int = 0x599
@@ -150,13 +108,33 @@ class PlayerSnapshot:
     max_health: int = 12
     rupees: int = 0
     maiamai: int = 0
-    inventory: List[int] = field(default_factory=lambda: [0] * 50)
-    event_flags_hex: str = ""
-    course_flags_hex: str = ""
-    unlocked_milestones: List[str] = field(default_factory=list)
 
-def bitwise_or_bytes(a: bytes, b: bytes) -> bytes:
-    return bytes(x | y for x, y in zip(a, b))
+
+# Every Player field a snapshot reads, in one request (EUR): +368 other
+# position .. +650 Shooter wrapper. A field outside it is read on its own.
+PLAYER_BLOCK = (0x360, 0x300)
+
+
+class _Block:
+    """Fields of one RPC read; a failed read or a field outside falls back to its own read."""
+
+    def __init__(self, bridge, base, offset, size):
+        self.bridge, self.base, self.offset = bridge, base, offset
+        data = bridge.read_memory(base + offset, size)
+        self.data = data if data is not None and len(data) == size else None
+
+    def _field(self, fmt, offset, read):
+        at = offset - self.offset
+        if self.data is not None and 0 <= at <= len(self.data) - struct.calcsize(fmt):
+            value = struct.unpack_from(fmt, self.data, at)
+            return value if len(value) > 1 else value[0]
+        return read(self.base + offset)
+
+    def u8(self, offset):return self._field('<B', offset, self.bridge.read_u8)
+    def u16(self, offset):return self._field('<H', offset, self.bridge.read_u16)
+    def u32(self, offset):return self._field('<I', offset, self.bridge.read_u32)
+    def f32(self, offset):return self._field('<f', offset, self.bridge.read_f32)
+    def vec3(self, offset):return self._field('<3f', offset, self.bridge.read_vec3)
 
 
 class ALBWMemoryController:
@@ -212,9 +190,9 @@ class ALBWMemoryController:
         # The existing profiles use the process heap / linear heap, never VRAM.
         return 0x08000000 <= pointer < 0x1F000000
 
-    def _hookshot_out(self):
+    def _hookshot_out(self, player):
         """This Link's own Shooter (wrapper slot 8, owner Player+40C) is drawn."""
-        wrapper = self.bridge.read_u32(self.player_ptr + 0x630 + 8 * 4)
+        wrapper = player.u32(0x630 + 8 * 4)
         raw = self.bridge.read_memory(wrapper, 12) if self._valid_pointer(wrapper or 0) else None
         if not raw or len(raw) != 12:
             return False
@@ -241,26 +219,27 @@ class ALBWMemoryController:
 
         p = self.profile
 
-        course = self.bridge.read_u8(self.game_ptr + 0x18)
-        stage = self.bridge.read_u32(self.game_ptr + 0x1C)
+        # Course, stage and entrance in one request (game +18/+1C/+20).
+        scene = self.bridge.read_memory(self.game_ptr + 0x18, 10)
+        course, stage, entrance = struct.unpack('<B3xIH', scene) if scene and len(scene) == 10 else (None,) * 3
         snap.course = course if course is not None else 0
         snap.stage = stage if stage is not None else 0
-        entrance = self.bridge.read_u16(self.game_ptr + 0x20)
         snap.entrance = entrance if entrance is not None else 0
 
-        vec = self.bridge.read_vec3(self.player_ptr + p.actor_pos_offset)
+        player = _Block(self.bridge, self.player_ptr, *PLAYER_BLOCK)
+        vec = player.vec3(p.actor_pos_offset)
         if vec:
             snap.x, snap.y, snap.z = vec
         if p.actor_yaw_binary:
-            rotation = self.bridge.read_u32(self.player_ptr + p.actor_yaw_offset)
+            rotation = player.u32(p.actor_yaw_offset)
             yaw = rotation * (math.tau / (1 << 32)) if rotation is not None else None
         else:
-            yaw = self.bridge.read_f32(self.player_ptr + p.actor_yaw_offset)
+            yaw = player.f32(p.actor_yaw_offset)
         if yaw is not None:
             snap.yaw = yaw
 
-        hp = self.bridge.read_u8(self.player_ptr + p.player_health_offset)
-        max_hp = self.bridge.read_u8(self.player_ptr + p.player_max_health_offset)
+        hp = player.u8(p.player_health_offset)
+        max_hp = player.u8(p.player_max_health_offset)
         if (hp is None or max_hp is None or not 12 <= max_hp <= 80
                 or max_hp % 4 != 0 or not 0 <= hp <= max_hp
                 or course not in COURSE_NAMES or stage is None or vec is None
@@ -278,11 +257,13 @@ class ALBWMemoryController:
                     'f0412de90040a0e1da0f80e2281091e8281080e8'))
         if self._pose_code_matches and scene_ready is True and yaw is not None and all(abs(v) <= 1e6 for v in vec):
             # The native setPos routine maintains these two world-space vectors.
-            other = self.bridge.read_vec3(self.player_ptr + 0x368)
-            model = self.bridge.read_u32(self.player_ptr+0x600)
-            body_valid=self._valid_pointer(model or 0) and self.bridge.read_u32(model)==0x6DA424
-            ids=tuple(self.bridge.read_u16(model+offset) for offset in (0x52,0x72)) if body_valid else ()
-            action=self.bridge.read_u32(self.player_ptr+0x614)
+            other = player.vec3(0x368)
+            model = player.u32(0x600)
+            # Body type and both animation indices (+52/+72) in one request.
+            body = _Block(self.bridge, model, 0, 0x74) if self._valid_pointer(model or 0) else None
+            body_valid = bool(body) and body.u32(0) == 0x6DA424
+            ids=tuple(body.u16(offset) for offset in (0x52,0x72)) if body_valid else ()
+            action=player.u32(0x614)
             jumping=(body_valid and ids in ((17,17),(18,18)) and self._valid_pointer(action or 0)
                      and self.bridge.read_u16(action+0x42)==2)
             # The EUR jump capture shows a vertical integration-step difference
@@ -292,12 +273,11 @@ class ALBWMemoryController:
             # The hookshot slide moves Link faster than the .25 gap between
             # these vectors (22/10: the companion vanished for the whole slide).
             # Admit a bounded 1-unit gap only while his own Shooter is out.
-            if self._hookshot_out():tolerance=(1.,.6,1.)
+            if self._hookshot_out(player):tolerance=(1.,.6,1.)
             snap.pose_verified=bool(body_valid and other and all(math.isfinite(a) and abs(a-b)<limit
                 for a,b,limit in zip(other,vec,tolerance)))
             if snap.pose_verified:
-                for name, offset in (('animation_id',0x52),('upper_animation_id',0x72)):
-                    index = self.bridge.read_u16(model+offset)
+                for name, index in zip(('animation_id','upper_animation_id'), ids):
                     if index is not None and 0<=index<176:
                         setattr(snap,name,index)
                 from src.memory.render_state import RenderStateReader
@@ -311,36 +291,17 @@ class ALBWMemoryController:
                     snap.pose_verified=False
                     snap.render_state={}
 
-        maiamai = self.bridge.read_u8(self.player_ptr + p.player_maiamai_offset)
+        maiamai = player.u8(p.player_maiamai_offset)
         if maiamai is not None:
             snap.maiamai = maiamai
 
-        rupees = self.bridge.read_u16(self.player_ptr+0x4FC) if self._pose_code_matches else None
+        rupees = player.u16(0x4FC) if self._pose_code_matches else None
         if rupees is None:rupees=self.bridge.read_u16(p.fcram_rupees_addr)
         if rupees is not None and rupees <= 9999:
             snap.rupees = rupees
 
-        inv_bytes = self.bridge.read_memory(self.player_ptr + p.player_inventory_offset, 50 * 4)
-        if inv_bytes and len(inv_bytes) == 200:
-            snap.inventory = list(struct.unpack("<50I", inv_bytes))
-
-        if self.event_flags_ptr:
-            live_flags = self.bridge.read_memory(self.event_flags_ptr + 0x48, 0x80)
-            if live_flags and len(live_flags) == 0x80:
-                if self.save_ptr:
-                    save_flags = self.bridge.read_memory(self.save_ptr + 0x40, 0x80)
-                    if save_flags and len(save_flags) == 0x80:
-                        live_flags = bitwise_or_bytes(live_flags, save_flags)
-                snap.event_flags_hex = live_flags.hex()
-                snap.unlocked_milestones = self._extract_milestones(live_flags)
-
-        if self.course_flags_ptr and 0 <= snap.course <= 23:
-            # Only this 32-byte portion has a proven per-course layout. The
-            # other flags use shared groups, not the following sixteen bytes.
-            c_flags = self.bridge.read_memory(self.course_flags_ptr + snap.course * 0x16C + 0x160, 0x20)
-            if c_flags and len(c_flags) == 0x20:
-                snap.course_flags_hex = c_flags.hex()
-
+        # Inventory and story flags are no longer read or sent each frame: no
+        # service used them (progress travels through shared_progress).
         if not self.bridge.rpc_connected or self._scene_reader.playable(self.bss_delta) is False:
             snap.in_game = False
             snap.pose_verified = False
@@ -348,16 +309,6 @@ class ALBWMemoryController:
             self.player_ptr = 0
         self.last_snapshot = snap
         return snap
-
-    @staticmethod
-    def _extract_milestones(event_flags: bytes) -> List[str]:
-        milestones: List[str] = []
-        for bit_index, label in STORY_FLAGS_MAP.items():
-            byte_idx = bit_index >> 3
-            mask = 1 << (bit_index & 7)
-            if byte_idx < len(event_flags) and (event_flags[byte_idx] & mask):
-                milestones.append(label)
-        return milestones
 
     def teleport_to_coordinates(self, target_x: float, target_y: float, target_z: float) -> bool:
         """Teleports local Link to target coordinates when in the same course/stage."""
