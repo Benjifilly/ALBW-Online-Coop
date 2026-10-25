@@ -135,6 +135,7 @@ class CoopOrchestrator(QObject):
                         "waiting_game": "Azahar répond. En attente du lancement d’ALBW.",
                         "other_game": "Le jeu ouvert n’est pas une version EUR / USA reconnue d’ALBW.",
                         "rpc_incompatible": "Le serveur RPC ne fournit pas la liste des jeux attendue.",
+                        "rpc_old": "Azahar est trop ancien pour le mod (version 2125 ou avant) : installez Azahar 2126.2 ou plus récent.",
                         "rpc_unavailable": "Communication avec le jeu indisponible. Nouvelle tentative automatique.",
                     }[detection], getattr(self.bridge, "last_failure", "") if detection == "rpc_unavailable" else "")
                 all_peers,life_ready = self.net.get_life_peers()

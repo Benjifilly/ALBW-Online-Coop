@@ -134,13 +134,21 @@ def azahar_running():
     return azahar_pid() != 0
 
 
-def albw_attached():
+OLD_AZAHAR = "Azahar trop ancien : installez 2126.2"
+
+
+def rpc_detection():
+    """(ALBW attached, detection status) through Azahar's RPC server."""
     from src.rpc.azahar_bridge import AzaharBridge
     bridge = AzaharBridge(port=RPC_PORT, timeout=.25, retries=1)
     try:
-        return bridge.auto_attach_albw(force=True)
+        return bridge.auto_attach_albw(force=True), bridge.detection_status
     finally:
         bridge.close()
+
+
+def albw_attached():
+    return rpc_detection()[0]
 
 
 def lan_address():
@@ -255,9 +263,12 @@ def gather():
     checks.append(Check("Liaison", "ok" if status.link_ready else "bad",
                         "serveur RPC et débogueur" if status.link_ready else "à activer (Azahar fermé)"))
     status.azahar_running = safely(azahar_running, False)
-    status.albw_running = status.azahar_running and status.link_ready and safely(albw_attached, False)
-    checks.append(Check("Partie", "ok" if status.albw_running else "info",
-                        "ALBW ouvert" if status.albw_running else
+    attached, detection = (safely(rpc_detection, (False, "")) if status.azahar_running and status.link_ready
+                           else (False, ""))
+    status.albw_running = attached
+    old = detection == "rpc_old"
+    checks.append(Check("Partie", "ok" if attached else "bad" if old else "info",
+                        "ALBW ouvert" if attached else OLD_AZAHAR if old else
                         "Azahar ouvert" if status.azahar_running else "Azahar fermé"))
     pads = controllers()
     checks.append(Check("Manette", "ok" if pads else "info",
@@ -410,9 +421,15 @@ def wait_for_game():
     deadline = time.monotonic() + GAME_WAIT
     step = 0
     while time.monotonic() < deadline:
-        if albw_attached():
+        attached, detection = rpc_detection()
+        if attached:
             sys.stdout.write(f"\r  {GREEN}✔ ALBW est prêt.{' ' * 40}{RESET}\n")
             return True
+        if detection == "rpc_old":
+            # Waiting cannot help: this Azahar's RPC server never lists the game.
+            sys.stdout.write(f"\r  {RED}✖ {OLD_AZAHAR}.{' ' * 20}{RESET}\n"
+                             f"  {MUTED}{AZAHAR_DOWNLOAD}{RESET}\n")
+            return False
         sys.stdout.write(f"\r  {GOLD}{frames[step % 4]}{RESET} {PALE}Ouverture d’ALBW dans Azahar…{RESET}"
                          f"  {MUTED}Échap pour ne plus attendre{RESET}")
         sys.stdout.flush()

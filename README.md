@@ -56,7 +56,7 @@
 ## 📦 Ce qu'il faut
 
 - **Windows 10 ou 11**
-- **[Azahar](https://azahar-emu.org/)** (testé avec la version 2126.2)
+- **[Azahar](https://azahar-emu.org/)** 2126.2 ou plus récent (2125 et avant ne sont pas compatibles)
 - **Votre copie** de *A Link Between Worlds*, **version européenne (EUR)** : la
   version américaine est reconnue, mais les fonctions avancées ne sont
   vérifiées que sur l'EUR
@@ -199,6 +199,15 @@ des compagnons, le journal de la session et les réglages du HUD.
 
 Chargez une sauvegarde : le compagnon attend une vraie partie, pas l'écran
 titre.
+</details>
+
+<details>
+<summary><b>« Azahar trop ancien » ou « Serveur RPC incompatible »</b></summary>
+
+Le compagnon lit le jeu par le serveur RPC d'Azahar 2126. Azahar 2125 et avant
+répondent avec une autre version de ce protocole : installez
+[Azahar 2126.2](https://github.com/azahar-emu/azahar/releases/latest), puis
+relancez `run_coop.bat`.
 </details>
 
 <details>

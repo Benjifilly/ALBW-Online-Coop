@@ -80,7 +80,7 @@ class AzaharBridge:
         if len(raw_reply) < HEADER_SIZE:
             return None
         reply_version, reply_id, reply_type, reply_data_size = struct.unpack("<IIII", raw_reply[:HEADER_SIZE])
-        if (reply_version == CURRENT_REQUEST_VERSION and expected_id == reply_id
+        if (reply_version == self.version and expected_id == reply_id
                 and expected_type == reply_type and reply_data_size == len(raw_reply) - HEADER_SIZE):
             return raw_reply[HEADER_SIZE:]
         return None
@@ -128,7 +128,7 @@ class AzaharBridge:
         reply = self._request(RequestType.ProcessList, struct.pack("<II", 0, 64))
         if not reply or len(reply) < 4:
             if reply is not None:
-                self.detection_status = "rpc_incompatible"
+                self.detection_status = "rpc_old" if reply == b"" and self._speaks_version_1() else "rpc_incompatible"
             return processes
         count = struct.unpack("<I", reply[:4])[0]
         body = reply[4:]
@@ -144,6 +144,19 @@ class AzaharBridge:
             processes[proc_id] = (title_id, proc_name)
         return processes
 
+    def _speaks_version_1(self) -> bool:
+        """Azahar 2125 and older speak RPC version 1 and answer every version 2
+        request with an empty packet (25/10: « Serveur RPC incompatible » on a
+        friend's PC). A well-formed version 1 list proves it; the companion
+        itself keeps version 2, the protocol it was verified with."""
+        self.version = 1
+        try:
+            reply = self._request(RequestType.ProcessList, struct.pack("<II", 0, 64))
+        finally:
+            self.version = CURRENT_REQUEST_VERSION
+        return (reply is not None and len(reply) >= 4
+                and len(reply) - 4 == struct.unpack_from("<I", reply)[0] * 0x14)
+
     def set_process(self, process_id: int) -> bool:
         reply = self._request(RequestType.SetGetProcess, struct.pack("<II", 1, process_id))
         return reply is not None
@@ -158,7 +171,7 @@ class AzaharBridge:
         procs = self.process_list()
         if not procs:
             self.detach()
-            if self.rpc_connected and self.detection_status != "rpc_incompatible":
+            if self.rpc_connected and self.detection_status not in ("rpc_incompatible", "rpc_old"):
                 self.detection_status = "waiting_game"
             return False
 

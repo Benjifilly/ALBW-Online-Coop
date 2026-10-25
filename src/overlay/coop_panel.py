@@ -570,6 +570,7 @@ class CoopPanel(QFrame):
         elif detection == "albw_detected":status = "ALBW reconnu · ouvrez une sauvegarde"
         elif detection == "other_game":status = "Autre jeu ouvert · lancez ALBW, version EUR ou USA"
         elif detection == "rpc_incompatible":status = "Serveur RPC incompatible · mettez Azahar à jour"
+        elif detection == "rpc_old":status = "Azahar trop ancien · installez Azahar 2126.2"
         elif detection == "read_error":status = "Données indisponibles · détails dans le journal"
         elif state.get("rpc_connected"):status = "Azahar connecté · lancez ALBW"
         elif self.overlay.azahar_hwnd:status = "Azahar ouvert · lancez ALBW ou activez son serveur RPC"
