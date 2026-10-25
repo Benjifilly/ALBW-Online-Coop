@@ -23,9 +23,15 @@ def _integer(value,low,high):
 
 def unmerge_hook_pull(value):
     """The hookshot pull moves Link with the same +5B0/+6BC interpolation as a
-    wall merge (22/10): a Link on his own flying hook is never a painting."""
+    wall merge (22/10): a Link on his own flying hook is never a painting.
+    Nor one holding his Shooter: at the start of the pull the hook may not be
+    surveyed yet (one survey per 50 ms), and the companion vanished there —
+    a merge hides the body until a painting that never comes. A Link entering
+    a wall holds no tool."""
     from src.memory.bomb_state import HOOK_KIND
-    if value.get('merged') and any(shot.get('kind')==HOOK_KIND for shot in value.get('bombs',())):
+    if value.get('merged') and (any(shot.get('kind')==HOOK_KIND for shot in value.get('bombs',()))
+                                or any(item.get('kind')=='hookshot' and item.get('visible')
+                                       for item in value.get('items',()))):
         value['merged']=False;value.pop('wall',None)
     return value
 
